@@ -34,6 +34,10 @@ export default function Dashboard() {
   const [openclawConfig, setOpenclawConfig] = useState(null);
   const [openclawHeartbeat, setOpenclawHeartbeat] = useState(null);
   const [savingOpenclaw, setSavingOpenclaw] = useState(false);
+  
+  // Sent tweets log
+  const [sentTweets, setSentTweets] = useState([]);
+  const [showSentTweets, setShowSentTweets] = useState(false);
 
   useEffect(() => { checkAuth(); }, []);
 
@@ -231,6 +235,16 @@ export default function Dashboard() {
   useEffect(() => {
     if (config.webhookUrl) fetchOpenclawConfig();
   }, [config.webhookUrl]);
+
+  // Fetch sent tweets log
+  async function fetchSentTweets() {
+    try {
+      const res = await fetch(`${API_URL}/sent-tweets?limit=50`, { headers: authHeaders() });
+      if (res.ok) setSentTweets(await res.json());
+    } catch (err) {
+      console.log('Failed to fetch sent tweets:', err.message);
+    }
+  }
 
   async function saveConfig() {
     setSaving(true); setMessage(null);
@@ -506,6 +520,53 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        <div className="section">
+          <div className="section-header">
+            <h2>📋 Message Log</h2>
+            <button 
+              className="btn-secondary btn-small" 
+              onClick={() => { setShowSentTweets(!showSentTweets); if (!showSentTweets) fetchSentTweets(); }}
+            >
+              {showSentTweets ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          {showSentTweets && (
+            <div className="section-body">
+              <div className="log-actions">
+                <button className="btn-secondary btn-small" onClick={fetchSentTweets}>Refresh</button>
+                <span className="hint">{sentTweets.length} messages</span>
+              </div>
+              <div className="tweet-log">
+                {sentTweets.length === 0 ? (
+                  <div className="empty">No messages sent yet</div>
+                ) : (
+                  sentTweets.map((tweet, i) => (
+                    <div key={tweet.id || i} className="log-entry">
+                      <div className="log-header">
+                        <span className="log-handle">@{tweet.handle}</span>
+                        <span className={`log-status ${tweet.status}`}>{tweet.status}</span>
+                        <span className="log-time">{new Date(tweet.created_at).toLocaleString()}</span>
+                      </div>
+                      <div className="log-tweet">{tweet.tweet_text}</div>
+                      {tweet.handle_config && (tweet.handle_config.prompt || tweet.handle_config.channel) && (
+                        <div className="log-config">
+                          {tweet.handle_config.prompt && <span className="config-tag">Prompt: {tweet.handle_config.prompt}</span>}
+                          {tweet.handle_config.channel && <span className="config-tag">Canal: {tweet.handle_config.channel}</span>}
+                          {tweet.handle_config.mode && <span className="config-tag">Mode: {tweet.handle_config.mode}</span>}
+                        </div>
+                      )}
+                      <details className="log-formatted">
+                        <summary>Ver mensaje completo (lo que ve OpenClaw)</summary>
+                        <pre>{tweet.formatted_message}</pre>
+                      </details>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="actions">
           <button className="btn-secondary" onClick={triggerPoll}>Poll Now</button>
@@ -1199,5 +1260,116 @@ const styles = `
     padding: 12px;
     background: #111;
     border-radius: 8px;
+  }
+
+  .btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .log-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .tweet-log {
+    max-height: 500px;
+    overflow-y: auto;
+  }
+
+  .log-entry {
+    padding: 12px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+
+  .log-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+
+  .log-handle {
+    font-weight: 600;
+    color: #0070f3;
+  }
+
+  .log-status {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+
+  .log-status.sent {
+    background: rgba(0, 200, 100, 0.1);
+    color: #0c8;
+  }
+
+  .log-status.failed {
+    background: rgba(255, 0, 0, 0.1);
+    color: #f00;
+  }
+
+  .log-time {
+    color: #666;
+    margin-left: auto;
+  }
+
+  .log-tweet {
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .log-config {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .config-tag {
+    font-size: 11px;
+    padding: 4px 8px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    color: #888;
+  }
+
+  .log-formatted {
+    margin-top: 8px;
+  }
+
+  .log-formatted summary {
+    font-size: 12px;
+    color: #666;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  .log-formatted summary:hover {
+    color: #0070f3;
+  }
+
+  .log-formatted pre {
+    margin-top: 8px;
+    padding: 12px;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #ccc;
+    font-family: 'Monaco', 'Menlo', monospace;
   }
 `;

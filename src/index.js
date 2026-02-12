@@ -73,6 +73,20 @@ async function initDb() {
     )
   `);
   
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sent_tweets (
+      id SERIAL PRIMARY KEY,
+      tweet_id TEXT NOT NULL,
+      handle TEXT NOT NULL,
+      tweet_text TEXT,
+      tweet_url TEXT,
+      formatted_message TEXT,
+      handle_config JSONB,
+      status TEXT DEFAULT 'sent',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  
   // Insert default config if not exists
   await pool.query(`
     INSERT INTO config (id) VALUES (1)
@@ -261,11 +275,76 @@ async function fetchLatestTweets(handles, maxItemsPerHandle = 10) {
 // ============================================
 // Webhook sender
 // ============================================
+
+// Format message the same way the webhook server does
+function formatMessageForOpenClaw(tweet, handleConfig) {
+  let msg = '';
+  
+  if (handleConfig?.prompt) {
+    msg += `INSTRUCCIÓN: ${handleConfig.prompt}\n\n`;
+  }
+  
+  if (handleConfig?.channel) {
+    msg += `CANAL: Respondé por ${handleConfig.channel}\n\n`;
+  }
+  
+  const author = tweet.author?.userName || 'unknown';
+  msg += `🐦 New tweet from @${author}`;
+  
+  if (tweet.isReply) {
+    msg += ` (reply to @${tweet.inReplyToUsername})`;
+  } else if (tweet.isQuote) {
+    msg += ` (quote)`;
+  } else if (tweet.isRetweet) {
+    msg += ` (retweet)`;
+  }
+  
+  msg += `:\n\n${tweet.text}`;
+  
+  if (tweet.url) {
+    msg += `\n\n${tweet.url}`;
+  }
+  
+  return msg;
+}
+
+// Log sent tweet to database
+async function logSentTweet(tweet, handleConfig, formattedMessage, status = 'sent') {
+  try {
+    await pool.query(`
+      INSERT INTO sent_tweets (tweet_id, handle, tweet_text, tweet_url, formatted_message, handle_config, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [
+      tweet.id,
+      tweet.author?.userName || 'unknown',
+      tweet.text,
+      tweet.url,
+      formattedMessage,
+      JSON.stringify(handleConfig || {}),
+      status
+    ]);
+  } catch (err) {
+    console.error('[DB] Failed to log sent tweet:', err.message);
+  }
+}
+
+// Get recent sent tweets
+async function getSentTweets(limit = 50) {
+  const result = await pool.query(
+    'SELECT * FROM sent_tweets ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
 async function sendToWebhook(config, tweet, handleConfig) {
   if (!config.webhookUrl) {
     console.log('[Webhook] No webhook URL configured');
     return false;
   }
+
+  // Format the message that OpenClaw will see
+  const formattedMessage = formatMessageForOpenClaw(tweet, handleConfig);
 
   const payload = {
     event: 'new_tweet',
@@ -310,9 +389,17 @@ async function sendToWebhook(config, tweet, handleConfig) {
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     console.log(`[Webhook] Sent tweet ${tweet.id}`);
+    
+    // Log to database
+    await logSentTweet(tweet, handleConfig, formattedMessage, 'sent');
+    
     return true;
   } catch (err) {
     console.error(`[Webhook] Error:`, err.message);
+    
+    // Log failed attempt
+    await logSentTweet(tweet, handleConfig, formattedMessage, 'failed');
+    
     return false;
   }
 }
@@ -620,6 +707,17 @@ function createApiServer() {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Poll triggered' }));
         restartPolling();
+        return;
+      }
+
+      // Get sent tweets log
+      if (path === '/sent-tweets' && req.method === 'GET') {
+        if (!await requireAuth(req, res)) return;
+        const url = new URL(req.url, `http://localhost:${PORT}`);
+        const limit = parseInt(url.searchParams.get('limit')) || 50;
+        const tweets = await getSentTweets(Math.min(limit, 200));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(tweets));
         return;
       }
 
