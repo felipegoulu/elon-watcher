@@ -1,5 +1,5 @@
 export const metadata = {
-  title: 'Tweet Watcher',
+  title: 'PinchMe',
   description: 'Real-time X monitoring',
 };
 
