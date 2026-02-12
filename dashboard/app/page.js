@@ -4,7 +4,16 @@ import { useState, useEffect } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
+const NAV_ITEMS = [
+  { id: 'webhook', label: 'Webhook', icon: '🔗' },
+  { id: 'accounts', label: 'Accounts', icon: '👤' },
+  { id: 'polling', label: 'Polling', icon: '⏱️' },
+  { id: 'openclaw', label: 'OpenClaw', icon: '🦞' },
+  { id: 'logs', label: 'Message Log', icon: '📋' },
+];
+
 export default function Dashboard() {
+  const [activeSection, setActiveSection] = useState('webhook');
   const [auth, setAuth] = useState({ checked: false, authenticated: false, username: '' });
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
@@ -30,14 +39,11 @@ export default function Dashboard() {
   const [editingHandle, setEditingHandle] = useState(null);
   const [handleConfigForm, setHandleConfigForm] = useState({ mode: 'now', prompt: '', channel: '' });
   
-  // OpenClaw config
   const [openclawConfig, setOpenclawConfig] = useState(null);
   const [openclawHeartbeat, setOpenclawHeartbeat] = useState(null);
   const [savingOpenclaw, setSavingOpenclaw] = useState(false);
   
-  // Sent tweets log
   const [sentTweets, setSentTweets] = useState([]);
-  const [showSentTweets, setShowSentTweets] = useState(false);
 
   useEffect(() => { checkAuth(); }, []);
 
@@ -109,13 +115,10 @@ export default function Dashboard() {
       if (res.ok) {
         const cfg = await res.json();
         setConfig(cfg);
-        // Fetch OpenClaw config via API proxy (avoids mixed content)
         if (cfg.webhookUrl) {
           try {
             const ocRes = await fetch(`${API_URL}/openclaw/config`, { headers: authHeaders() });
-            if (ocRes.ok) {
-              setOpenclawConfig(await ocRes.json());
-            }
+            if (ocRes.ok) setOpenclawConfig(await ocRes.json());
           } catch (e) { console.log('OpenClaw config fetch failed:', e); }
         }
       }
@@ -166,7 +169,6 @@ export default function Dashboard() {
     setEditingHandle(handle);
   }
 
-  // OpenClaw config functions (via API proxy to avoid mixed content)
   async function fetchOpenclawConfig() {
     if (!config.webhookUrl) return;
     try {
@@ -231,12 +233,10 @@ export default function Dashboard() {
     setOpenclawConfig(updated);
   }
 
-  // Fetch openclaw config when webhook URL is available
   useEffect(() => {
     if (config.webhookUrl) fetchOpenclawConfig();
   }, [config.webhookUrl]);
 
-  // Fetch sent tweets log
   async function fetchSentTweets() {
     try {
       const res = await fetch(`${API_URL}/sent-tweets?limit=50`, { headers: authHeaders() });
@@ -245,6 +245,10 @@ export default function Dashboard() {
       console.log('Failed to fetch sent tweets:', err.message);
     }
   }
+
+  useEffect(() => {
+    if (activeSection === 'logs' && auth.authenticated) fetchSentTweets();
+  }, [activeSection, auth.authenticated]);
 
   async function saveConfig() {
     setSaving(true); setMessage(null);
@@ -298,18 +302,47 @@ export default function Dashboard() {
 
   return (
     <div className="page">
-      <nav className="nav">
-        <div className="nav-left">
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
           <span className="logo">⚡</span>
-          <span className="nav-title">Tweet Watcher</span>
+          <span className="logo-text">Tweet Watcher</span>
         </div>
-        <div className="nav-right">
-          <button className="nav-btn" onClick={() => setShowPasswordModal(true)}>Settings</button>
-          <div className="nav-user">{auth.username}</div>
-          <button className="nav-btn" onClick={handleLogout}>Logout</button>
-        </div>
-      </nav>
+        
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map(item => (
+            <button
+              key={item.id}
+              className={`nav-item ${activeSection === item.id ? 'active' : ''}`}
+              onClick={() => setActiveSection(item.id)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+              {item.id === 'accounts' && config.handles.length > 0 && (
+                <span className="nav-badge">{config.handles.length}</span>
+              )}
+            </button>
+          ))}
+        </nav>
 
+        <div className="sidebar-footer">
+          {status && (
+            <div className="status-indicator">
+              <span className="status-dot online"></span>
+              <span className="status-text">
+                {Object.keys(status.state?.lastSeenIds || {}).length} accounts tracked
+              </span>
+            </div>
+          )}
+          <div className="user-section">
+            <span className="user-name">{auth.username}</span>
+            <button className="icon-btn" onClick={() => setShowPasswordModal(true)} title="Settings">⚙️</button>
+            <button className="icon-btn" onClick={handleLogout} title="Logout">🚪</button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
       <main className="main">
         {message && (
           <div className={`toast ${message.type}`}>
@@ -318,232 +351,284 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="section">
-          <div className="section-header">
-            <h2>Webhook</h2>
-          </div>
-          <div className="section-body">
-            <label>Endpoint URL</label>
-            <input 
-              type="url" 
-              value={config.webhookUrl} 
-              onChange={e => setConfig({...config, webhookUrl: e.target.value})}
-              placeholder="https://example.com/webhook"
-            />
-            <span className="hint">New tweets will be sent here as POST requests</span>
-          </div>
-        </div>
-
-        <div className="section">
-          <div className="section-header">
-            <h2>Accounts</h2>
-            <span className="count">{config.handles.length}</span>
-          </div>
-          <div className="section-body">
-            <label>Add Account</label>
-            <div className="input-row">
-              <div className="handle-input-wrap">
-                <span className="at">@</span>
-                <input 
-                  type="text" 
-                  value={newHandle} 
-                  onChange={e => setNewHandle(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addHandle())}
-                  placeholder="username"
-                />
-              </div>
-              <button className="btn-secondary" onClick={addHandle} disabled={!newHandle.trim()}>Add</button>
+        {/* Webhook Section */}
+        {activeSection === 'webhook' && (
+          <div className="content">
+            <div className="content-header">
+              <h1>Webhook Configuration</h1>
+              <p>Configure where new tweets are sent</p>
             </div>
             
-            {handlePreview && (
-              <div className="preview">
-                <span>@{handlePreview.handle}</span>
-                <a href={handlePreview.url} target="_blank" rel="noopener noreferrer">View on X →</a>
+            <div className="card">
+              <label>Endpoint URL</label>
+              <input 
+                type="url" 
+                value={config.webhookUrl} 
+                onChange={e => setConfig({...config, webhookUrl: e.target.value})}
+                placeholder="https://example.com/webhook"
+              />
+              <span className="hint">New tweets will be sent here as POST requests</span>
+            </div>
+
+            <div className="actions">
+              <button className="btn-primary" onClick={saveConfig} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Accounts Section */}
+        {activeSection === 'accounts' && (
+          <div className="content">
+            <div className="content-header">
+              <h1>Twitter Accounts</h1>
+              <p>Manage which accounts to monitor</p>
+            </div>
+            
+            <div className="card">
+              <label>Add Account</label>
+              <div className="input-row">
+                <div className="handle-input-wrap">
+                  <span className="at">@</span>
+                  <input 
+                    type="text" 
+                    value={newHandle} 
+                    onChange={e => setNewHandle(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addHandle())}
+                    placeholder="username"
+                  />
+                </div>
+                <button className="btn-secondary" onClick={addHandle} disabled={!newHandle.trim()}>Add</button>
+              </div>
+              
+              {handlePreview && (
+                <div className="preview">
+                  <span>@{handlePreview.handle}</span>
+                  <a href={handlePreview.url} target="_blank" rel="noopener noreferrer">View on X →</a>
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <label>Monitored Accounts</label>
+              <div className="handles-list">
+                {config.handles.length === 0 ? (
+                  <div className="empty">No accounts added yet</div>
+                ) : (
+                  config.handles.map(h => (
+                    <div key={h} className="handle-row">
+                      <div className="handle-info">
+                        <a href={`https://x.com/${h}`} target="_blank" rel="noopener noreferrer">@{h}</a>
+                        {handleConfigs[h]?.prompt && <span className="config-badge" title="Has custom prompt">⚡</span>}
+                        {handleConfigs[h]?.mode === 'next-heartbeat' && <span className="mode-badge">batched</span>}
+                      </div>
+                      <div className="handle-actions">
+                        <button className="icon-btn" onClick={() => openHandleConfig(h)} title="Configure">⚙️</button>
+                        <button className="icon-btn danger" onClick={() => removeHandle(h)} title="Remove">🗑️</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="actions">
+              <button className="btn-primary" onClick={saveConfig} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Polling Section */}
+        {activeSection === 'polling' && (
+          <div className="content">
+            <div className="content-header">
+              <h1>Polling Settings</h1>
+              <p>Configure how often to check for new tweets</p>
+            </div>
+            
+            <div className="card">
+              <label>Poll Interval: {config.pollIntervalMinutes} minutes</label>
+              <input 
+                type="range" 
+                min="1" 
+                max="60" 
+                value={config.pollIntervalMinutes}
+                onChange={e => setConfig({...config, pollIntervalMinutes: parseInt(e.target.value)})}
+              />
+              <div className="range-labels">
+                <span>1 min</span>
+                <span>60 min</span>
+              </div>
+              <span className="hint">
+                Estimated cost: ~${(0.40 * Math.max(1, config.handles.length) * (60 / config.pollIntervalMinutes) * 24).toFixed(2)}/day
+              </span>
+            </div>
+
+            {status && (
+              <div className="card">
+                <label>Status</label>
+                <div className="status-grid">
+                  <div className="status-item">
+                    <span className="status-label">State</span>
+                    <span className="status-value online">● Running</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="status-label">Last Poll</span>
+                    <span className="status-value">{status.state?.lastPoll ? new Date(status.state.lastPoll).toLocaleString() : '—'}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="status-label">Accounts</span>
+                    <span className="status-value">{Object.keys(status.state?.lastSeenIds || {}).length} tracked</span>
+                  </div>
+                </div>
               </div>
             )}
 
-            <div className="handles">
-              {config.handles.length === 0 ? (
-                <div className="empty">No accounts added</div>
-              ) : (
-                config.handles.map(h => (
-                  <div key={h} className="handle-tag">
-                    <a href={`https://x.com/${h}`} target="_blank" rel="noopener noreferrer">@{h}</a>
-                    {handleConfigs[h]?.prompt && <span className="config-badge" title="Has custom prompt">⚡</span>}
-                    <button className="config-btn" onClick={() => openHandleConfig(h)} title="Configure">⚙</button>
-                    <button onClick={() => removeHandle(h)}>×</button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="section">
-          <div className="section-header">
-            <h2>Polling</h2>
-            <span className="count">{config.pollIntervalMinutes}m</span>
-          </div>
-          <div className="section-body">
-            <label>Interval</label>
-            <input 
-              type="range" 
-              min="1" 
-              max="60" 
-              value={config.pollIntervalMinutes}
-              onChange={e => setConfig({...config, pollIntervalMinutes: parseInt(e.target.value)})}
-            />
-            <div className="range-labels">
-              <span>1 min</span>
-              <span>60 min</span>
-            </div>
-            <span className="hint">
-              Estimated: ~${(0.40 * Math.max(1, config.handles.length) * (60 / config.pollIntervalMinutes) * 24).toFixed(2)}/day
-            </span>
-          </div>
-        </div>
-
-        {status && (
-          <div className="section status-section">
-            <div className="status-row">
-              <div className="status-item">
-                <span className="status-label">Status</span>
-                <span className="status-value online">● Online</span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">Tracking</span>
-                <span className="status-value">{Object.keys(status.state?.lastSeenIds || {}).length} accounts</span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">Last poll</span>
-                <span className="status-value">{status.state?.lastPoll ? new Date(status.state.lastPoll).toLocaleTimeString() : '—'}</span>
-              </div>
+            <div className="actions">
+              <button className="btn-secondary" onClick={triggerPoll}>Poll Now</button>
+              <button className="btn-primary" onClick={saveConfig} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
             </div>
           </div>
         )}
 
-        {openclawConfig && (
-          <div className="section">
-            <div className="section-header">
-              <h2>🦞 OpenClaw</h2>
-              {openclawHeartbeat && (
-                <span className={`status-badge ${openclawHeartbeat.status === 'ok-token' ? 'ok' : ''}`}>
-                  {openclawHeartbeat.status === 'ok-token' ? '● OK' : openclawHeartbeat.status}
-                </span>
-              )}
+        {/* OpenClaw Section */}
+        {activeSection === 'openclaw' && (
+          <div className="content">
+            <div className="content-header">
+              <h1>🦞 OpenClaw Settings</h1>
+              <p>Configure heartbeat and notification behavior</p>
             </div>
-            <div className="section-body">
-              <label>Heartbeat Interval</label>
-              <div className="input-row">
-                <input 
-                  type="text" 
-                  value={openclawConfig?.agents?.defaults?.heartbeat?.every || '30m'}
-                  onChange={e => updateHeartbeatConfig('every', e.target.value)}
-                  placeholder="30m"
-                  style={{width: '100px'}}
-                />
-                <span className="hint-inline">e.g., 5m, 15m, 1h</span>
-              </div>
-
-              <label>Target Channel</label>
-              <select 
-                value={openclawConfig?.agents?.defaults?.heartbeat?.target || 'last'}
-                onChange={e => updateHeartbeatConfig('target', e.target.value)}
-              >
-                <option value="last">Last active</option>
-                <option value="telegram">Telegram</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="discord">Discord</option>
-                <option value="none">None (silent)</option>
-              </select>
-
-              {openclawConfig?.agents?.defaults?.heartbeat?.target === 'telegram' && (
-                <>
-                  <label>Telegram Chat ID</label>
-                  <input 
-                    type="text" 
-                    value={openclawConfig?.agents?.defaults?.heartbeat?.to || ''}
-                    onChange={e => updateHeartbeatConfig('to', e.target.value)}
-                    placeholder="e.g., 5679450975"
-                  />
-                </>
-              )}
-
-              <div className="checkbox-group">
-                <label className="checkbox-label">
-                  <input 
-                    type="checkbox"
-                    checked={openclawConfig?.agents?.defaults?.heartbeat?.includeReasoning || false}
-                    onChange={e => updateHeartbeatConfig('includeReasoning', e.target.checked)}
-                  />
-                  <span>Include Reasoning</span>
-                  <span className="hint-small">Show thinking process</span>
-                </label>
-              </div>
-
-              <div className="checkbox-group">
-                <label className="checkbox-label">
-                  <input 
-                    type="checkbox"
-                    checked={openclawConfig?.channels?.telegram?.heartbeat?.showOk || false}
-                    onChange={e => updateChannelHeartbeat('telegram', 'showOk', e.target.checked)}
-                  />
-                  <span>Show OK Messages</span>
-                  <span className="hint-small">Send message even when nothing to report</span>
-                </label>
-              </div>
-
-              {openclawHeartbeat && (
-                <div className="heartbeat-status">
-                  <span className="hint">Last heartbeat: {openclawHeartbeat.status} 
-                    {openclawHeartbeat.durationMs && ` (${openclawHeartbeat.durationMs}ms)`}
-                    {openclawHeartbeat.silent && ' — silent'}
-                  </span>
+            
+            {!openclawConfig ? (
+              <div className="card">
+                <div className="empty">
+                  <p>OpenClaw config not available.</p>
+                  <p className="hint">Make sure the webhook URL points to a server with OpenClaw access.</p>
                 </div>
-              )}
-
-              <div className="actions" style={{marginTop: '16px', justifyContent: 'flex-start'}}>
-                <button 
-                  className="btn-primary" 
-                  onClick={() => saveOpenclawConfig(openclawConfig)}
-                  disabled={savingOpenclaw}
-                >
-                  {savingOpenclaw ? 'Saving...' : 'Save OpenClaw Config'}
-                </button>
-                <button 
-                  className="btn-secondary" 
-                  onClick={fetchOpenclawHeartbeat}
-                >
-                  Refresh Status
-                </button>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="card">
+                  <label>Heartbeat Interval</label>
+                  <div className="input-row">
+                    <input 
+                      type="text" 
+                      value={openclawConfig?.agents?.defaults?.heartbeat?.every || '30m'}
+                      onChange={e => updateHeartbeatConfig('every', e.target.value)}
+                      placeholder="30m"
+                      style={{width: '120px'}}
+                    />
+                    <span className="hint-inline">e.g., 5m, 15m, 1h</span>
+                  </div>
+                </div>
+
+                <div className="card">
+                  <label>Target Channel</label>
+                  <select 
+                    value={openclawConfig?.agents?.defaults?.heartbeat?.target || 'last'}
+                    onChange={e => updateHeartbeatConfig('target', e.target.value)}
+                  >
+                    <option value="last">Last active</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="discord">Discord</option>
+                    <option value="none">None (silent)</option>
+                  </select>
+
+                  {openclawConfig?.agents?.defaults?.heartbeat?.target === 'telegram' && (
+                    <>
+                      <label style={{marginTop: '16px'}}>Telegram Chat ID</label>
+                      <input 
+                        type="text" 
+                        value={openclawConfig?.agents?.defaults?.heartbeat?.to || ''}
+                        onChange={e => updateHeartbeatConfig('to', e.target.value)}
+                        placeholder="e.g., 5679450975"
+                      />
+                    </>
+                  )}
+                </div>
+
+                <div className="card">
+                  <label>Options</label>
+                  <div className="checkbox-group">
+                    <label className="checkbox-label">
+                      <input 
+                        type="checkbox"
+                        checked={openclawConfig?.agents?.defaults?.heartbeat?.includeReasoning || false}
+                        onChange={e => updateHeartbeatConfig('includeReasoning', e.target.checked)}
+                      />
+                      <span>Include Reasoning</span>
+                    </label>
+                    <span className="hint">Show AI thinking process in responses</span>
+                  </div>
+
+                  <div className="checkbox-group">
+                    <label className="checkbox-label">
+                      <input 
+                        type="checkbox"
+                        checked={openclawConfig?.channels?.telegram?.heartbeat?.showOk || false}
+                        onChange={e => updateChannelHeartbeat('telegram', 'showOk', e.target.checked)}
+                      />
+                      <span>Show OK Messages</span>
+                    </label>
+                    <span className="hint">Send message even when nothing to report</span>
+                  </div>
+                </div>
+
+                {openclawHeartbeat && (
+                  <div className="card">
+                    <label>Last Heartbeat</label>
+                    <div className="heartbeat-info">
+                      <span className={`status-badge ${openclawHeartbeat.status === 'ok-token' ? 'ok' : ''}`}>
+                        {openclawHeartbeat.status === 'ok-token' ? '● OK' : openclawHeartbeat.status}
+                      </span>
+                      {openclawHeartbeat.durationMs && <span className="hint"> ({openclawHeartbeat.durationMs}ms)</span>}
+                      {openclawHeartbeat.silent && <span className="hint"> — silent</span>}
+                    </div>
+                  </div>
+                )}
+
+                <div className="actions">
+                  <button className="btn-secondary" onClick={fetchOpenclawHeartbeat}>Refresh Status</button>
+                  <button 
+                    className="btn-primary" 
+                    onClick={() => saveOpenclawConfig(openclawConfig)}
+                    disabled={savingOpenclaw}
+                  >
+                    {savingOpenclaw ? 'Saving...' : 'Save OpenClaw Config'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
-        <div className="section">
-          <div className="section-header">
-            <h2>📋 Message Log</h2>
-            <button 
-              className="btn-secondary btn-small" 
-              onClick={() => { setShowSentTweets(!showSentTweets); if (!showSentTweets) fetchSentTweets(); }}
-            >
-              {showSentTweets ? 'Hide' : 'Show'}
-            </button>
-          </div>
-          {showSentTweets && (
-            <div className="section-body">
-              <div className="log-actions">
+        {/* Message Log Section */}
+        {activeSection === 'logs' && (
+          <div className="content">
+            <div className="content-header">
+              <h1>Message Log</h1>
+              <p>Recent tweets sent to webhook</p>
+            </div>
+            
+            <div className="card">
+              <div className="log-header">
+                <span>{sentTweets.length} messages</span>
                 <button className="btn-secondary btn-small" onClick={fetchSentTweets}>Refresh</button>
-                <span className="hint">{sentTweets.length} messages</span>
               </div>
+              
               <div className="tweet-log">
                 {sentTweets.length === 0 ? (
                   <div className="empty">No messages sent yet</div>
                 ) : (
                   sentTweets.map((tweet, i) => (
                     <div key={tweet.id || i} className="log-entry">
-                      <div className="log-header">
+                      <div className="log-entry-header">
                         <span className="log-handle">@{tweet.handle}</span>
                         <span className={`log-status ${tweet.status}`}>{tweet.status}</span>
                         <span className="log-time">{new Date(tweet.created_at).toLocaleString()}</span>
@@ -556,8 +641,8 @@ export default function Dashboard() {
                           {tweet.handle_config.mode && <span className="config-tag">Mode: {tweet.handle_config.mode}</span>}
                         </div>
                       )}
-                      <details className="log-formatted">
-                        <summary>Ver mensaje completo (lo que ve OpenClaw)</summary>
+                      <details className="log-details">
+                        <summary>View full message</summary>
                         <pre>{tweet.formatted_message}</pre>
                       </details>
                     </div>
@@ -565,17 +650,11 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-          )}
-        </div>
-
-        <div className="actions">
-          <button className="btn-secondary" onClick={triggerPoll}>Poll Now</button>
-          <button className="btn-primary" onClick={saveConfig} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
-        </div>
+          </div>
+        )}
       </main>
 
+      {/* Password Modal */}
       {showPasswordModal && (
         <div className="modal-overlay" onClick={() => setShowPasswordModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -597,42 +676,43 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Handle Config Modal */}
       {editingHandle && (
         <div className="modal-overlay" onClick={() => setEditingHandle(null)}>
           <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
             <h3>Configure @{editingHandle}</h3>
             
-            <label>Mode</label>
+            <label>Notification Mode</label>
             <div className="radio-group">
               <label className={`radio-option ${handleConfigForm.mode === 'now' ? 'selected' : ''}`}>
                 <input type="radio" name="mode" value="now" checked={handleConfigForm.mode === 'now'} onChange={e => setHandleConfigForm({...handleConfigForm, mode: e.target.value})} />
-                <span className="radio-label">Instant</span>
-                <span className="radio-desc">Notify immediately</span>
+                <span className="radio-label">⚡ Instant</span>
+                <span className="radio-desc">Notify immediately when tweet detected</span>
               </label>
               <label className={`radio-option ${handleConfigForm.mode === 'next-heartbeat' ? 'selected' : ''}`}>
                 <input type="radio" name="mode" value="next-heartbeat" checked={handleConfigForm.mode === 'next-heartbeat'} onChange={e => setHandleConfigForm({...handleConfigForm, mode: e.target.value})} />
-                <span className="radio-label">Batched</span>
-                <span className="radio-desc">Wait for next heartbeat</span>
+                <span className="radio-label">📦 Batched</span>
+                <span className="radio-desc">Wait for next heartbeat cycle</span>
               </label>
             </div>
 
-            <label>Channel</label>
+            <label>Channel Override</label>
             <select value={handleConfigForm.channel} onChange={e => setHandleConfigForm({...handleConfigForm, channel: e.target.value})}>
               <option value="">Default (active session)</option>
               <option value="telegram">Telegram</option>
               <option value="whatsapp">WhatsApp</option>
               <option value="discord">Discord</option>
             </select>
-            <span className="hint">Where to send notifications</span>
+            <span className="hint">Where to send notifications for this account</span>
 
             <label>Custom Prompt</label>
             <textarea 
               value={handleConfigForm.prompt} 
               onChange={e => setHandleConfigForm({...handleConfigForm, prompt: e.target.value})}
-              placeholder="e.g., Analyze this tweet and give your opinion"
+              placeholder="e.g., Analyze this tweet and summarize the key points"
               rows={3}
             />
-            <span className="hint">Instructions for how OpenClaw should process tweets from this account</span>
+            <span className="hint">Special instructions for processing tweets from this account</span>
 
             <div className="modal-actions">
               <button type="button" className="btn-secondary" onClick={() => setEditingHandle(null)}>Cancel</button>
@@ -653,107 +733,183 @@ const styles = `
     background: #000;
     color: #fafafa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  }
-
-  .nav {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 24px;
-    height: 64px;
-    border-bottom: 1px solid #333;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(10px);
-    z-index: 100;
   }
 
-  .nav-left {
+  /* Sidebar */
+  .sidebar {
+    width: 260px;
+    min-height: 100vh;
+    background: #0a0a0a;
+    border-right: 1px solid #222;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+  }
+
+  .sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid #222;
     display: flex;
     align-items: center;
     gap: 12px;
   }
 
   .logo {
-    font-size: 20px;
+    font-size: 24px;
   }
 
-  .nav-title {
-    font-size: 14px;
-    font-weight: 500;
+  .logo-text {
+    font-size: 16px;
+    font-weight: 600;
   }
 
-  .nav-right {
+  .sidebar-nav {
+    flex: 1;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .nav-item {
     display: flex;
     align-items: center;
-    gap: 16px;
-  }
-
-  .nav-btn {
-    background: none;
+    gap: 12px;
+    padding: 12px 16px;
+    background: transparent;
     border: none;
+    border-radius: 8px;
     color: #888;
     font-size: 14px;
     cursor: pointer;
-    padding: 8px 12px;
-    border-radius: 6px;
     transition: all 0.15s;
+    text-align: left;
+    width: 100%;
   }
 
-  .nav-btn:hover {
+  .nav-item:hover {
+    background: #111;
     color: #fff;
-    background: #111;
   }
 
-  .nav-user {
-    font-size: 14px;
+  .nav-item.active {
+    background: #1a1a1a;
+    color: #fff;
+  }
+
+  .nav-icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+  }
+
+  .nav-label {
+    flex: 1;
+  }
+
+  .nav-badge {
+    background: #333;
     color: #888;
-    padding: 6px 12px;
-    background: #111;
-    border-radius: 6px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
   }
 
-  .main {
-    max-width: 680px;
-    margin: 0 auto;
-    padding: 48px 24px;
-    padding-top: 112px;
+  .sidebar-footer {
+    padding: 16px;
+    border-top: 1px solid #222;
   }
 
-  .section {
-    border: 1px solid #333;
-    border-radius: 12px;
-    margin-bottom: 24px;
-    background: #0a0a0a;
-  }
-
-  .section-header {
+  .status-indicator {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid #333;
-  }
-
-  .section-header h2 {
-    font-size: 14px;
-    font-weight: 500;
-    margin: 0;
-  }
-
-  .count {
+    gap: 8px;
     font-size: 12px;
     color: #666;
-    background: #1a1a1a;
-    padding: 4px 8px;
-    border-radius: 4px;
+    margin-bottom: 12px;
   }
 
-  .section-body {
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #333;
+  }
+
+  .status-dot.online {
+    background: #0c8;
+  }
+
+  .user-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .user-name {
+    flex: 1;
+    font-size: 13px;
+    color: #888;
+  }
+
+  .icon-btn {
+    background: none;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+
+  .icon-btn:hover {
+    opacity: 1;
+    background: #1a1a1a;
+  }
+
+  .icon-btn.danger:hover {
+    background: rgba(255, 0, 0, 0.1);
+  }
+
+  /* Main Content */
+  .main {
+    flex: 1;
+    margin-left: 260px;
+    padding: 32px 48px;
+    min-height: 100vh;
+  }
+
+  .content {
+    max-width: 640px;
+  }
+
+  .content-header {
+    margin-bottom: 32px;
+  }
+
+  .content-header h1 {
+    font-size: 28px;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+
+  .content-header p {
+    color: #666;
+    margin: 0;
+    font-size: 14px;
+  }
+
+  .card {
+    background: #0a0a0a;
+    border: 1px solid #222;
+    border-radius: 12px;
     padding: 20px;
+    margin-bottom: 16px;
   }
 
   label {
@@ -793,9 +949,16 @@ const styles = `
     margin-top: 8px;
   }
 
+  .hint-inline {
+    font-size: 12px;
+    color: #666;
+    margin-left: 12px;
+  }
+
   .input-row {
     display: flex;
     gap: 12px;
+    align-items: center;
   }
 
   .handle-input-wrap {
@@ -831,41 +994,53 @@ const styles = `
     text-decoration: none;
   }
 
-  .handles {
-    margin-top: 16px;
+  .handles-list {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 8px;
   }
 
-  .handle-tag {
+  .handle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: #111;
+    border-radius: 8px;
+  }
+
+  .handle-info {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 6px;
-    font-size: 13px;
   }
 
-  .handle-tag a {
+  .handle-info a {
     color: #fafafa;
     text-decoration: none;
+    font-weight: 500;
   }
 
-  .handle-tag button {
-    background: none;
-    border: none;
+  .handle-info a:hover {
+    color: #0070f3;
+  }
+
+  .config-badge {
+    font-size: 12px;
+  }
+
+  .mode-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: #1a1a1a;
+    border-radius: 4px;
     color: #666;
-    font-size: 16px;
-    cursor: pointer;
-    padding: 0;
-    line-height: 1;
+    text-transform: uppercase;
   }
 
-  .handle-tag button:hover {
-    color: #f00;
+  .handle-actions {
+    display: flex;
+    gap: 4px;
   }
 
   .empty {
@@ -901,15 +1076,10 @@ const styles = `
     margin-top: 8px;
   }
 
-  .status-section {
-    background: transparent;
-    border: 1px solid #333;
-  }
-
-  .status-row {
-    display: flex;
-    padding: 16px 20px;
-    gap: 32px;
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
   }
 
   .status-item {
@@ -928,18 +1098,71 @@ const styles = `
   }
 
   .status-value.online {
-    color: #0070f3;
+    color: #0c8;
+  }
+
+  select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #fafafa;
+    outline: none;
+    cursor: pointer;
+  }
+
+  select:focus {
+    border-color: #666;
+  }
+
+  .checkbox-group {
+    margin-bottom: 16px;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+
+  .heartbeat-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-badge {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: #1a1a1a;
+    color: #666;
+  }
+
+  .status-badge.ok {
+    background: rgba(0, 200, 100, 0.1);
+    color: #0c8;
   }
 
   .actions {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
-    margin-top: 32px;
+    margin-top: 24px;
   }
 
   .btn-primary {
-    padding: 10px 16px;
+    padding: 10px 20px;
     font-size: 14px;
     font-weight: 500;
     background: #fff;
@@ -960,7 +1183,7 @@ const styles = `
   }
 
   .btn-secondary {
-    padding: 10px 16px;
+    padding: 10px 20px;
     font-size: 14px;
     font-weight: 500;
     background: transparent;
@@ -980,6 +1203,11 @@ const styles = `
     cursor: not-allowed;
   }
 
+  .btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
   .toast {
     display: flex;
     justify-content: space-between;
@@ -988,12 +1216,13 @@ const styles = `
     border-radius: 8px;
     margin-bottom: 24px;
     font-size: 14px;
+    max-width: 640px;
   }
 
   .toast.success {
-    background: rgba(0, 112, 243, 0.1);
-    border: 1px solid #0070f3;
-    color: #0070f3;
+    background: rgba(0, 200, 100, 0.1);
+    border: 1px solid #0c8;
+    color: #0c8;
   }
 
   .toast.error {
@@ -1011,12 +1240,123 @@ const styles = `
     opacity: 0.7;
   }
 
+  /* Log Section */
+  .log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #666;
+  }
+
+  .tweet-log {
+    max-height: 600px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .log-entry {
+    padding: 16px;
+    background: #111;
+    border-radius: 8px;
+  }
+
+  .log-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+
+  .log-handle {
+    font-weight: 600;
+    color: #0070f3;
+  }
+
+  .log-status {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .log-status.sent {
+    background: rgba(0, 200, 100, 0.1);
+    color: #0c8;
+  }
+
+  .log-status.failed {
+    background: rgba(255, 0, 0, 0.1);
+    color: #f00;
+  }
+
+  .log-time {
+    color: #666;
+    margin-left: auto;
+    font-size: 12px;
+  }
+
+  .log-tweet {
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .log-config {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .config-tag {
+    font-size: 11px;
+    padding: 4px 8px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    color: #888;
+  }
+
+  .log-details {
+    margin-top: 12px;
+  }
+
+  .log-details summary {
+    font-size: 12px;
+    color: #666;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  .log-details summary:hover {
+    color: #0070f3;
+  }
+
+  .log-details pre {
+    margin-top: 8px;
+    padding: 12px;
+    background: #0a0a0a;
+    border: 1px solid #222;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #ccc;
+    font-family: 'Monaco', 'Menlo', monospace;
+  }
+
   /* Login */
   .login-container {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 100%;
   }
 
   .login-box {
@@ -1086,7 +1426,7 @@ const styles = `
   }
 
   .modal h3 {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
     margin: 0 0 20px;
   }
@@ -1107,28 +1447,29 @@ const styles = `
   }
 
   .modal-wide {
-    max-width: 480px;
+    max-width: 500px;
   }
 
-  .config-badge {
-    font-size: 12px;
-    margin-left: 4px;
-  }
-
-  .config-btn {
-    background: none;
-    border: none;
-    color: #666;
+  textarea {
+    width: 100%;
+    padding: 10px 12px;
     font-size: 14px;
-    cursor: pointer;
-    padding: 0 4px;
-    opacity: 0.7;
-    transition: opacity 0.15s;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #fafafa;
+    outline: none;
+    resize: vertical;
+    font-family: inherit;
+    box-sizing: border-box;
   }
 
-  .config-btn:hover {
-    opacity: 1;
-    color: #0070f3;
+  textarea:focus {
+    border-color: #666;
+  }
+
+  textarea::placeholder {
+    color: #444;
   }
 
   .radio-group {
@@ -1141,7 +1482,7 @@ const styles = `
     flex: 1;
     display: flex;
     flex-direction: column;
-    padding: 12px;
+    padding: 14px;
     background: #111;
     border: 1px solid #333;
     border-radius: 8px;
@@ -1173,203 +1514,47 @@ const styles = `
     color: #666;
   }
 
-  select {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 14px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #fafafa;
-    outline: none;
-    cursor: pointer;
-    margin-bottom: 4px;
-  }
+  /* Responsive */
+  @media (max-width: 768px) {
+    .sidebar {
+      width: 100%;
+      height: auto;
+      position: relative;
+      border-right: none;
+      border-bottom: 1px solid #222;
+    }
 
-  select:focus {
-    border-color: #666;
-  }
+    .sidebar-nav {
+      flex-direction: row;
+      overflow-x: auto;
+      padding: 8px;
+    }
 
-  textarea {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 14px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #fafafa;
-    outline: none;
-    resize: vertical;
-    font-family: inherit;
-    box-sizing: border-box;
-  }
+    .nav-item {
+      flex-direction: column;
+      padding: 8px 16px;
+      gap: 4px;
+    }
 
-  textarea:focus {
-    border-color: #666;
-  }
+    .nav-label {
+      font-size: 11px;
+    }
 
-  textarea::placeholder {
-    color: #444;
-  }
+    .nav-badge {
+      display: none;
+    }
 
-  .status-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    background: #1a1a1a;
-    color: #666;
-  }
+    .sidebar-footer {
+      display: none;
+    }
 
-  .status-badge.ok {
-    background: rgba(0, 200, 100, 0.1);
-    color: #0c8;
-  }
+    .main {
+      margin-left: 0;
+      padding: 24px;
+    }
 
-  .hint-inline {
-    font-size: 12px;
-    color: #666;
-    margin-left: 12px;
-  }
-
-  .hint-small {
-    font-size: 11px;
-    color: #666;
-    margin-left: 8px;
-  }
-
-  .checkbox-group {
-    margin-top: 16px;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    font-size: 14px;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-  }
-
-  .heartbeat-status {
-    margin-top: 16px;
-    padding: 12px;
-    background: #111;
-    border-radius: 8px;
-  }
-
-  .btn-small {
-    padding: 6px 12px;
-    font-size: 12px;
-  }
-
-  .log-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .tweet-log {
-    max-height: 500px;
-    overflow-y: auto;
-  }
-
-  .log-entry {
-    padding: 12px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 8px;
-    margin-bottom: 8px;
-  }
-
-  .log-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
-    font-size: 13px;
-  }
-
-  .log-handle {
-    font-weight: 600;
-    color: #0070f3;
-  }
-
-  .log-status {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    text-transform: uppercase;
-  }
-
-  .log-status.sent {
-    background: rgba(0, 200, 100, 0.1);
-    color: #0c8;
-  }
-
-  .log-status.failed {
-    background: rgba(255, 0, 0, 0.1);
-    color: #f00;
-  }
-
-  .log-time {
-    color: #666;
-    margin-left: auto;
-  }
-
-  .log-tweet {
-    font-size: 14px;
-    line-height: 1.5;
-    margin-bottom: 8px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .log-config {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .config-tag {
-    font-size: 11px;
-    padding: 4px 8px;
-    background: #1a1a1a;
-    border-radius: 4px;
-    color: #888;
-  }
-
-  .log-formatted {
-    margin-top: 8px;
-  }
-
-  .log-formatted summary {
-    font-size: 12px;
-    color: #666;
-    cursor: pointer;
-    padding: 4px 0;
-  }
-
-  .log-formatted summary:hover {
-    color: #0070f3;
-  }
-
-  .log-formatted pre {
-    margin-top: 8px;
-    padding: 12px;
-    background: #0a0a0a;
-    border: 1px solid #333;
-    border-radius: 6px;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: #ccc;
-    font-family: 'Monaco', 'Menlo', monospace;
+    .page {
+      flex-direction: column;
+    }
   }
 `;
