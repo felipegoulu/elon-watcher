@@ -98,6 +98,24 @@ async function sendToWebhook(tweet) {
       isRetweet: tweet.isRetweet,
       isQuote: tweet.isQuote,
       isReply: tweet.isReply,
+      // Reply context
+      inReplyToId: tweet.inReplyToId,
+      inReplyToUser: tweet.inReplyToUsername,
+      // If replying, include the parent tweet info
+      replyTo: tweet.isReply ? {
+        id: tweet.inReplyToId,
+        user: tweet.inReplyToUsername,
+        text: tweet.inReplyToText || tweet.quotedTweet?.text,
+      } : null,
+      // If quoting, include the quoted tweet
+      quotedTweet: tweet.isQuote && tweet.quotedTweet ? {
+        id: tweet.quotedTweet.id,
+        url: tweet.quotedTweet.url,
+        text: tweet.quotedTweet.text,
+        author: tweet.quotedTweet.author?.userName,
+      } : null,
+      // Conversation ID for threads
+      conversationId: tweet.conversationId,
     },
   };
 
@@ -188,7 +206,15 @@ async function poll(client) {
     // Send new tweets to webhook (oldest first, to maintain chronological order)
     newTweets.reverse();
     for (const tweet of newTweets) {
-      console.log(`[New Tweet] ${tweet.id}: ${tweet.text?.substring(0, 100)}...`);
+      let context = '';
+      if (tweet.isReply) {
+        context = ` [Reply to @${tweet.inReplyToUsername}]`;
+      } else if (tweet.isQuote) {
+        context = ` [Quote of @${tweet.quotedTweet?.author?.userName}]`;
+      } else if (tweet.isRetweet) {
+        context = ` [Retweet]`;
+      }
+      console.log(`[New Tweet]${context} ${tweet.id}: ${tweet.text?.substring(0, 100)}...`);
       await sendToWebhook(tweet);
     }
 
