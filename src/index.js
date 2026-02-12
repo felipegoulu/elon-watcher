@@ -137,6 +137,8 @@ async function sendToWebhook(tweet) {
 // ============================================
 async function poll(client) {
   const state = loadState();
+  const now = Date.now();
+  const maxAgeMs = config.pollIntervalMinutes * 60 * 1000 * 2; // 2x interval as buffer
   
   try {
     const tweets = await fetchLatestTweets(client, config.twitterHandle);
@@ -149,16 +151,35 @@ async function poll(client) {
     // Sort by ID descending (newest first)
     tweets.sort((a, b) => b.id.localeCompare(a.id));
 
-    // Find new tweets (those newer than lastSeenTweetId)
+    // First run: just save state, don't send anything
+    if (!state.lastSeenTweetId) {
+      console.log(`[${new Date().toISOString()}] First run - initializing state, not sending tweets`);
+      state.lastSeenTweetId = tweets[0].id;
+      state.lastSeenTimestamp = new Date().toISOString();
+      saveState(state);
+      return;
+    }
+
+    // Find new tweets (those newer than lastSeenTweetId AND within time window)
     const newTweets = [];
     for (const tweet of tweets) {
-      if (!state.lastSeenTweetId || tweet.id > state.lastSeenTweetId) {
-        newTweets.push(tweet);
+      if (tweet.id > state.lastSeenTweetId) {
+        // Also check if tweet is recent enough (within 2x polling interval)
+        const tweetTime = new Date(tweet.createdAt).getTime();
+        if (now - tweetTime <= maxAgeMs) {
+          newTweets.push(tweet);
+        } else {
+          console.log(`[Skip] Tweet ${tweet.id} too old (${tweet.createdAt})`);
+        }
       }
     }
 
     if (newTweets.length === 0) {
       console.log(`[${new Date().toISOString()}] No new tweets`);
+      // Still update state with newest ID
+      state.lastSeenTweetId = tweets[0].id;
+      state.lastSeenTimestamp = new Date().toISOString();
+      saveState(state);
       return;
     }
 
