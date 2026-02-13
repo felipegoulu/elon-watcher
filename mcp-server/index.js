@@ -5,14 +5,13 @@ import cors from "cors";
 
 const PORT = process.env.PORT || 3002;
 const API_URL = process.env.API_URL || "https://elon-watcher-production.up.railway.app";
-const MCP_API_KEY = process.env.MCP_API_KEY || "";
 
-// Helper to call the backend API
-async function apiCall(method, path, body = null) {
+// Helper to call the backend API with user's API key
+async function apiCall(method, path, apiKey, body = null) {
   const url = `${API_URL}${path}`;
   const headers = { "Content-Type": "application/json" };
-  if (MCP_API_KEY) {
-    headers["X-API-Key"] = MCP_API_KEY;
+  if (apiKey) {
+    headers["X-API-Key"] = apiKey;
   }
   const options = { method, headers };
   if (body) options.body = JSON.stringify(body);
@@ -31,10 +30,16 @@ function createServer() {
   server.tool(
     "list_handles",
     "List all Twitter/X handles being monitored",
-    {},
-    async () => {
+    { api_key: { type: "string", description: "Your PinchMe API key (pk_...)" } },
+    async ({ api_key }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required. Get one from the PinchMe dashboard." }], isError: true };
+      }
       try {
-        const config = await apiCall("GET", "/config");
+        const config = await apiCall("GET", "/config", api_key);
+        if (config.error) {
+          return { content: [{ type: "text", text: `Error: ${config.error}` }], isError: true };
+        }
         return {
           content: [{
             type: "text",
@@ -55,16 +60,28 @@ function createServer() {
   server.tool(
     "add_handle",
     "Add a Twitter/X handle to monitor",
-    { handle: { type: "string", description: "Twitter/X username (without @)" } },
-    async ({ handle }) => {
+    {
+      api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
+      handle: { type: "string", description: "Twitter/X username (without @)" },
+    },
+    async ({ api_key, handle }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
+      if (!handle) {
+        return { content: [{ type: "text", text: "Error: handle is required" }], isError: true };
+      }
       try {
-        const config = await apiCall("GET", "/config");
+        const config = await apiCall("GET", "/config", api_key);
+        if (config.error) {
+          return { content: [{ type: "text", text: `Error: ${config.error}` }], isError: true };
+        }
         const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
         if (config.handles.includes(cleanHandle)) {
           return { content: [{ type: "text", text: `@${cleanHandle} is already being monitored` }] };
         }
         config.handles.push(cleanHandle);
-        await apiCall("PUT", "/config", config);
+        await apiCall("PUT", "/config", api_key, config);
         return { content: [{ type: "text", text: `Added @${cleanHandle}. Now tracking ${config.handles.length} accounts.` }] };
       } catch (error) {
         return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
@@ -76,17 +93,93 @@ function createServer() {
   server.tool(
     "remove_handle",
     "Remove a Twitter/X handle from monitoring",
-    { handle: { type: "string", description: "Twitter/X username to remove" } },
-    async ({ handle }) => {
+    {
+      api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
+      handle: { type: "string", description: "Twitter/X username to remove" },
+    },
+    async ({ api_key, handle }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
+      if (!handle) {
+        return { content: [{ type: "text", text: "Error: handle is required" }], isError: true };
+      }
       try {
-        const config = await apiCall("GET", "/config");
+        const config = await apiCall("GET", "/config", api_key);
+        if (config.error) {
+          return { content: [{ type: "text", text: `Error: ${config.error}` }], isError: true };
+        }
         const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
         if (!config.handles.includes(cleanHandle)) {
           return { content: [{ type: "text", text: `@${cleanHandle} is not being monitored` }] };
         }
         config.handles = config.handles.filter((h) => h !== cleanHandle);
-        await apiCall("PUT", "/config", config);
+        await apiCall("PUT", "/config", api_key, config);
         return { content: [{ type: "text", text: `Removed @${cleanHandle}. Now tracking ${config.handles.length} accounts.` }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // Tool: Configure handle
+  server.tool(
+    "configure_handle",
+    "Configure alert settings for a specific handle",
+    {
+      api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
+      handle: { type: "string", description: "Twitter/X username" },
+      mode: { type: "string", description: "Alert mode: 'now' (immediate) or 'next-heartbeat' (batched)" },
+      prompt: { type: "string", description: "Custom prompt/instructions for this handle's alerts" },
+      channel: { type: "string", description: "Channel to send alerts to (e.g., 'telegram', 'discord')" },
+    },
+    async ({ api_key, handle, mode, prompt, channel }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
+      if (!handle) {
+        return { content: [{ type: "text", text: "Error: handle is required" }], isError: true };
+      }
+      try {
+        const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
+        const body = {};
+        if (mode) body.mode = mode;
+        if (prompt !== undefined) body.prompt = prompt;
+        if (channel !== undefined) body.channel = channel;
+        
+        const result = await apiCall("PUT", `/handle-config/${cleanHandle}`, api_key, body);
+        if (result.error) {
+          return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
+        }
+        return { content: [{ type: "text", text: `Configured @${cleanHandle}: ${JSON.stringify(result.config)}` }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // Tool: Get handle config
+  server.tool(
+    "get_handle_config",
+    "Get alert configuration for a specific handle",
+    {
+      api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
+      handle: { type: "string", description: "Twitter/X username" },
+    },
+    async ({ api_key, handle }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
+      if (!handle) {
+        return { content: [{ type: "text", text: "Error: handle is required" }], isError: true };
+      }
+      try {
+        const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
+        const config = await apiCall("GET", `/handle-config/${cleanHandle}`, api_key);
+        if (config.error) {
+          return { content: [{ type: "text", text: `Error: ${config.error}` }], isError: true };
+        }
+        return { content: [{ type: "text", text: JSON.stringify(config, null, 2) }] };
       } catch (error) {
         return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
       }
@@ -97,10 +190,16 @@ function createServer() {
   server.tool(
     "poll_now",
     "Trigger an immediate poll for new tweets",
-    {},
-    async () => {
+    { api_key: { type: "string", description: "Your PinchMe API key (pk_...)" } },
+    async ({ api_key }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
       try {
-        await apiCall("POST", "/poll");
+        const result = await apiCall("POST", "/poll", api_key);
+        if (result.error) {
+          return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
+        }
         return { content: [{ type: "text", text: "Poll triggered. New tweets will be sent shortly." }] };
       } catch (error) {
         return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
@@ -112,10 +211,19 @@ function createServer() {
   server.tool(
     "get_recent_tweets",
     "Get recently captured tweets",
-    { limit: { type: "number", description: "Number of tweets (default: 10)" } },
-    async ({ limit = 10 }) => {
+    {
+      api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
+      limit: { type: "number", description: "Number of tweets (default: 10)" },
+    },
+    async ({ api_key, limit = 10 }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
       try {
-        const data = await apiCall("GET", `/sent-tweets?limit=${Math.min(limit, 50)}`);
+        const data = await apiCall("GET", `/sent-tweets?limit=${Math.min(limit, 50)}`, api_key);
+        if (data.error) {
+          return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+        }
         if (data.length === 0) {
           return { content: [{ type: "text", text: "No recent tweets found" }] };
         }
@@ -136,13 +244,19 @@ function createServer() {
   server.tool(
     "get_status",
     "Get current monitoring status",
-    {},
-    async () => {
+    { api_key: { type: "string", description: "Your PinchMe API key (pk_...)" } },
+    async ({ api_key }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
       try {
         const [config, status] = await Promise.all([
-          apiCall("GET", "/config"),
-          apiCall("GET", "/status"),
+          apiCall("GET", "/config", api_key),
+          apiCall("GET", "/status", api_key),
         ]);
+        if (config.error) {
+          return { content: [{ type: "text", text: `Error: ${config.error}` }], isError: true };
+        }
         return {
           content: [{
             type: "text",
@@ -154,6 +268,35 @@ function createServer() {
             }, null, 2),
           }],
         };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // Tool: Set poll interval
+  server.tool(
+    "set_poll_interval",
+    "Change how often to check for new tweets",
+    {
+      api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
+      minutes: { type: "number", description: "Poll interval in minutes (1-60)" },
+    },
+    async ({ api_key, minutes }) => {
+      if (!api_key) {
+        return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
+      }
+      if (!minutes || minutes < 1 || minutes > 60) {
+        return { content: [{ type: "text", text: "Error: minutes must be between 1 and 60" }], isError: true };
+      }
+      try {
+        const config = await apiCall("GET", "/config", api_key);
+        if (config.error) {
+          return { content: [{ type: "text", text: `Error: ${config.error}` }], isError: true };
+        }
+        config.pollIntervalMinutes = minutes;
+        await apiCall("PUT", "/config", api_key, config);
+        return { content: [{ type: "text", text: `Poll interval set to ${minutes} minutes.` }] };
       } catch (error) {
         return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
       }
@@ -181,7 +324,18 @@ app.get("/", (req, res) => {
     name: "PinchMe MCP Server",
     version: "1.0.0",
     endpoints: { sse: "/sse", health: "/health" },
-    tools: ["list_handles", "add_handle", "remove_handle", "poll_now", "get_recent_tweets", "get_status"],
+    tools: [
+      "list_handles",
+      "add_handle",
+      "remove_handle",
+      "configure_handle",
+      "get_handle_config",
+      "poll_now",
+      "get_recent_tweets",
+      "get_status",
+      "set_poll_interval",
+    ],
+    note: "All tools require api_key parameter. Get your API key from the PinchMe dashboard.",
   });
 });
 

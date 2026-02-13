@@ -64,10 +64,32 @@ async function initDb() {
   
   await pool.query(`
     CREATE TABLE IF NOT EXISTS handle_config (
-      handle TEXT PRIMARY KEY,
+      handle TEXT NOT NULL,
+      user_id TEXT NOT NULL DEFAULT 'felipegoulu',
       mode TEXT DEFAULT 'now',
       prompt TEXT DEFAULT '',
       channel TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (handle, user_id)
+    )
+  `);
+  
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      api_key TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT DEFAULT 'default',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_config (
+      user_id TEXT PRIMARY KEY,
+      webhook_url TEXT DEFAULT '',
+      handles TEXT[] DEFAULT '{}',
+      poll_interval_minutes INTEGER DEFAULT 15,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
@@ -166,43 +188,50 @@ async function getState() {
 }
 
 // ============================================
-// Handle config management
+// Handle config management (multi-tenant)
 // ============================================
-async function getHandleConfig(handle) {
+async function getHandleConfig(handle, userId = 'felipegoulu') {
   const result = await pool.query(
-    'SELECT * FROM handle_config WHERE handle = $1',
-    [handle.toLowerCase()]
+    'SELECT * FROM handle_config WHERE handle = $1 AND user_id = $2',
+    [handle.toLowerCase(), userId]
   );
   if (result.rows.length === 0) {
-    return { handle: handle.toLowerCase(), mode: 'now', prompt: '', channel: '' };
+    return { handle: handle.toLowerCase(), user_id: userId, mode: 'now', prompt: '', channel: '' };
   }
   return result.rows[0];
 }
 
-async function getAllHandleConfigs() {
-  const result = await pool.query('SELECT * FROM handle_config ORDER BY handle');
+async function getAllHandleConfigs(userId = 'felipegoulu') {
+  const result = await pool.query(
+    'SELECT * FROM handle_config WHERE user_id = $1 ORDER BY handle',
+    [userId]
+  );
   return result.rows;
 }
 
-async function setHandleConfig(handle, config) {
+async function setHandleConfig(handle, config, userId = 'felipegoulu') {
   await pool.query(`
-    INSERT INTO handle_config (handle, mode, prompt, channel, updated_at)
-    VALUES ($1, $2, $3, $4, NOW())
-    ON CONFLICT (handle) DO UPDATE SET
-      mode = $2,
-      prompt = $3,
-      channel = $4,
+    INSERT INTO handle_config (handle, user_id, mode, prompt, channel, updated_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
+    ON CONFLICT (handle, user_id) DO UPDATE SET
+      mode = $3,
+      prompt = $4,
+      channel = $5,
       updated_at = NOW()
   `, [
     handle.toLowerCase(),
+    userId,
     config.mode || 'now',
     config.prompt || '',
     config.channel || ''
   ]);
 }
 
-async function deleteHandleConfig(handle) {
-  await pool.query('DELETE FROM handle_config WHERE handle = $1', [handle.toLowerCase()]);
+async function deleteHandleConfig(handle, userId = 'felipegoulu') {
+  await pool.query(
+    'DELETE FROM handle_config WHERE handle = $1 AND user_id = $2',
+    [handle.toLowerCase(), userId]
+  );
 }
 
 // ============================================
@@ -244,6 +273,84 @@ async function deleteSession(token) {
 
 async function cleanupExpiredSessions() {
   await pool.query('DELETE FROM sessions WHERE expires_at < NOW()');
+}
+
+// ============================================
+// API Key management
+// ============================================
+async function generateApiKey(userId, name = 'default') {
+  const apiKey = 'pk_' + randomBytes(24).toString('hex');
+  await pool.query(`
+    INSERT INTO api_keys (api_key, user_id, name)
+    VALUES ($1, $2, $3)
+  `, [apiKey, userId, name]);
+  return apiKey;
+}
+
+async function validateApiKey(apiKey) {
+  if (!apiKey) return null;
+  const result = await pool.query(
+    'SELECT user_id FROM api_keys WHERE api_key = $1',
+    [apiKey]
+  );
+  return result.rows[0]?.user_id || null;
+}
+
+async function listApiKeys(userId) {
+  const result = await pool.query(
+    'SELECT api_key, name, created_at FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC',
+    [userId]
+  );
+  return result.rows;
+}
+
+async function deleteApiKey(apiKey, userId) {
+  await pool.query(
+    'DELETE FROM api_keys WHERE api_key = $1 AND user_id = $2',
+    [apiKey, userId]
+  );
+}
+
+// ============================================
+// User config management (multi-tenant)
+// ============================================
+async function getUserConfig(userId) {
+  // First try user-specific config
+  let result = await pool.query('SELECT * FROM user_config WHERE user_id = $1', [userId]);
+  if (result.rows.length > 0) {
+    const row = result.rows[0];
+    return {
+      webhookUrl: row.webhook_url || '',
+      handles: row.handles || [],
+      pollIntervalMinutes: row.poll_interval_minutes || 15,
+    };
+  }
+  // Fallback to global config for existing users
+  result = await pool.query('SELECT * FROM config WHERE id = 1');
+  const row = result.rows[0];
+  return {
+    webhookUrl: row?.webhook_url || '',
+    handles: row?.handles || [],
+    pollIntervalMinutes: row?.poll_interval_minutes || 15,
+  };
+}
+
+async function saveUserConfig(userId, config) {
+  await pool.query(`
+    INSERT INTO user_config (user_id, webhook_url, handles, poll_interval_minutes, updated_at)
+    VALUES ($1, $2, $3, $4, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET
+      webhook_url = $2,
+      handles = $3,
+      poll_interval_minutes = $4,
+      updated_at = NOW()
+  `, [
+    userId,
+    config.webhookUrl || '',
+    config.handles || [],
+    config.pollIntervalMinutes || 15,
+  ]);
+  console.log(`[Config] Saved for user ${userId}`);
 }
 
 // ============================================
@@ -513,11 +620,19 @@ function parseBody(req) {
 }
 
 async function requireAuth(req, res) {
-  // Check for API key (for MCP server access)
-  const apiKey = req.headers['x-api-key'];
+  // Check for user API key (pk_...)
+  const apiKeyHeader = req.headers['x-api-key'];
+  if (apiKeyHeader && apiKeyHeader.startsWith('pk_')) {
+    const userId = await validateApiKey(apiKeyHeader);
+    if (userId) {
+      return userId;
+    }
+  }
+  
+  // Check for legacy MCP_API_KEY (service account)
   const MCP_API_KEY = process.env.MCP_API_KEY;
-  if (apiKey && MCP_API_KEY && apiKey === MCP_API_KEY) {
-    return 'mcp-service'; // Service account
+  if (apiKeyHeader && MCP_API_KEY && apiKeyHeader === MCP_API_KEY) {
+    return 'felipegoulu'; // Legacy service account defaults to felipegoulu
   }
   
   // Check for JWT token
@@ -644,12 +759,53 @@ function createApiServer() {
         return;
       }
 
+      // === API Key management ===
+
+      // List API keys
+      if (path === '/api-keys' && req.method === 'GET') {
+        const username = await requireAuth(req, res);
+        if (!username) return;
+        const keys = await listApiKeys(username);
+        // Mask the keys for security (show first 8 chars only)
+        const maskedKeys = keys.map(k => ({
+          ...k,
+          api_key: k.api_key.substring(0, 11) + '...' + k.api_key.slice(-4),
+          api_key_full: k.api_key, // Include full key for copying
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(maskedKeys));
+        return;
+      }
+
+      // Generate new API key
+      if (path === '/api-keys' && req.method === 'POST') {
+        const username = await requireAuth(req, res);
+        if (!username) return;
+        const { name } = await parseBody(req);
+        const apiKey = await generateApiKey(username, name || 'default');
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, api_key: apiKey, name: name || 'default' }));
+        return;
+      }
+
+      // Delete API key
+      if (path.startsWith('/api-keys/') && req.method === 'DELETE') {
+        const username = await requireAuth(req, res);
+        if (!username) return;
+        const apiKey = decodeURIComponent(path.split('/')[2]);
+        await deleteApiKey(apiKey, username);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+        return;
+      }
+
       // === Protected routes ===
 
       // Get config
       if (path === '/config' && req.method === 'GET') {
-        if (!await requireAuth(req, res)) return;
-        const config = await getConfig();
+        const userId = await requireAuth(req, res);
+        if (!userId) return;
+        const config = await getUserConfig(userId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(config));
         return;
@@ -657,10 +813,11 @@ function createApiServer() {
 
       // Update config
       if (path === '/config' && req.method === 'PUT') {
-        if (!await requireAuth(req, res)) return;
+        const userId = await requireAuth(req, res);
+        if (!userId) return;
         
         const body = await parseBody(req);
-        const currentConfig = await getConfig();
+        const currentConfig = await getUserConfig(userId);
         
         const newConfig = {
           webhookUrl: body.webhookUrl ?? currentConfig.webhookUrl,
@@ -687,7 +844,7 @@ function createApiServer() {
           .map(h => h.replace(/^@/, '').trim().toLowerCase())
           .filter(Boolean);
         
-        await saveConfig(newConfig);
+        await saveUserConfig(userId, newConfig);
         restartPolling();
         
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -731,8 +888,9 @@ function createApiServer() {
 
       // Get all handle configs
       if (path === '/handle-config' && req.method === 'GET') {
-        if (!await requireAuth(req, res)) return;
-        const configs = await getAllHandleConfigs();
+        const userId = await requireAuth(req, res);
+        if (!userId) return;
+        const configs = await getAllHandleConfigs(userId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(configs));
         return;
@@ -740,14 +898,15 @@ function createApiServer() {
 
       // Get single handle config
       if (path.startsWith('/handle-config/') && req.method === 'GET') {
-        if (!await requireAuth(req, res)) return;
+        const userId = await requireAuth(req, res);
+        if (!userId) return;
         const handle = path.split('/')[2];
         if (!handle) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Handle required' }));
           return;
         }
-        const config = await getHandleConfig(handle);
+        const config = await getHandleConfig(handle, userId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(config));
         return;
@@ -755,7 +914,8 @@ function createApiServer() {
 
       // Create/update handle config
       if (path.startsWith('/handle-config/') && req.method === 'PUT') {
-        if (!await requireAuth(req, res)) return;
+        const userId = await requireAuth(req, res);
+        if (!userId) return;
         const handle = path.split('/')[2];
         if (!handle) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -775,9 +935,9 @@ function createApiServer() {
           mode: body.mode,
           prompt: body.prompt,
           channel: body.channel,
-        });
+        }, userId);
         
-        const updated = await getHandleConfig(handle);
+        const updated = await getHandleConfig(handle, userId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, config: updated }));
         return;
@@ -785,14 +945,15 @@ function createApiServer() {
 
       // Delete handle config
       if (path.startsWith('/handle-config/') && req.method === 'DELETE') {
-        if (!await requireAuth(req, res)) return;
+        const userId = await requireAuth(req, res);
+        if (!userId) return;
         const handle = path.split('/')[2];
         if (!handle) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Handle required' }));
           return;
         }
-        await deleteHandleConfig(handle);
+        await deleteHandleConfig(handle, userId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
         return;
