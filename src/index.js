@@ -1,6 +1,5 @@
 import { ApifyClient } from 'apify-client';
 import { createServer } from 'http';
-import https from 'https';
 import { createHash, randomBytes } from 'crypto';
 import pg from 'pg';
 
@@ -23,7 +22,7 @@ let client = null;
 
 // Debug state for monitoring
 const debugState = {
-  version: '2.1.0', // Added handle validation
+  version: '2.1.1', // Format validation only
   startedAt: new Date().toISOString(),
   lastPollAttempt: null,
   lastPollSuccess: null,
@@ -183,33 +182,9 @@ function isValidHandleFormat(handle) {
 }
 
 async function verifyTwitterHandle(handle) {
-  // Quick check via Twitter's intent API (no auth needed, fast)
-  return new Promise((resolve) => {
-    const url = `https://twitter.com/intent/user?screen_name=${handle}`;
-    
-    const req = https.get(url, { timeout: 5000 }, (res) => {
-      // 200 = exists, 404 = not found, 302 = redirect (usually exists)
-      if (res.statusCode === 200 || res.statusCode === 302) {
-        resolve({ valid: true, reason: 'exists' });
-      } else if (res.statusCode === 404) {
-        resolve({ valid: false, reason: 'not_found' });
-      } else {
-        // Other status - assume valid to avoid false negatives
-        resolve({ valid: true, reason: `status_${res.statusCode}` });
-      }
-    });
-    
-    req.on('error', (err) => {
-      console.error(`[Verify] Error checking @${handle}: ${err.message}`);
-      // On error, assume valid to avoid blocking
-      resolve({ valid: true, reason: 'error_skipped' });
-    });
-    
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ valid: true, reason: 'timeout_skipped' });
-    });
-  });
+  // Twitter's APIs require auth, so we just validate format
+  // If a handle doesn't exist, polls will simply return no tweets for it
+  return { valid: true, reason: 'format_ok' };
 }
 
 async function validateHandles(handles) {
