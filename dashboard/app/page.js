@@ -647,12 +647,53 @@ export default function Dashboard() {
               </div>
 
               <div className="mcp-info">
-                <h4>MCP Server URL</h4>
-                <div className="key-display">
-                  <code>https://pinchme-mcp-production.up.railway.app/sse</code>
-                  <button className="btn-secondary btn-small" onClick={() => copyToClipboard('https://pinchme-mcp-production.up.railway.app/sse')}>Copy</button>
+                <h4>🔌 MCP Integration</h4>
+                <p className="hint" style={{marginBottom: '16px'}}>Connect your AI agent to PinchMe using the Model Context Protocol (MCP).</p>
+                
+                <div style={{marginBottom: '16px'}}>
+                  <label style={{fontSize: '12px', color: '#888', marginBottom: '4px', display: 'block'}}>MCP Server URL</label>
+                  <div className="key-display">
+                    <code>https://pinchme-mcp-production.up.railway.app/sse</code>
+                    <button className="btn-secondary btn-small" onClick={() => copyToClipboard('https://pinchme-mcp-production.up.railway.app/sse')}>Copy</button>
+                  </div>
                 </div>
-                <p className="hint">Add this URL to your AI agent's MCP config, then use your API key when calling tools.</p>
+
+                <details style={{marginTop: '16px'}}>
+                  <summary style={{cursor: 'pointer', color: '#0070f3', fontSize: '14px'}}>📖 Setup Instructions</summary>
+                  <div style={{marginTop: '12px', padding: '16px', background: '#0a0a0a', borderRadius: '8px'}}>
+                    <p style={{fontSize: '13px', marginBottom: '12px'}}><strong>Step 1:</strong> Generate an API key above</p>
+                    <p style={{fontSize: '13px', marginBottom: '12px'}}><strong>Step 2:</strong> Authenticate once using:</p>
+                    <pre style={{background: '#111', padding: '12px', borderRadius: '6px', fontSize: '12px', overflow: 'auto', marginBottom: '16px'}}>
+{`mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.authenticate' \\
+  --args '{"api_key": "YOUR_API_KEY"}'`}
+                    </pre>
+                    <p style={{fontSize: '13px', marginBottom: '12px'}}><strong>Step 3:</strong> Use any tool without passing api_key:</p>
+                    <pre style={{background: '#111', padding: '12px', borderRadius: '6px', fontSize: '12px', overflow: 'auto', marginBottom: '16px'}}>
+{`mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.list_handles'
+mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.add_handle' --args '{"handle": "elonmusk"}'
+mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.poll_now'`}
+                    </pre>
+                    <p style={{fontSize: '12px', color: '#888'}}>✅ Auth persists across sessions and server restarts!</p>
+                  </div>
+                </details>
+
+                <details style={{marginTop: '12px'}}>
+                  <summary style={{cursor: 'pointer', color: '#0070f3', fontSize: '14px'}}>🛠 Available Tools (10)</summary>
+                  <div style={{marginTop: '12px', padding: '16px', background: '#0a0a0a', borderRadius: '8px'}}>
+                    <ul style={{margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: '1.8'}}>
+                      <li><code>authenticate</code> — Auth with API key (once)</li>
+                      <li><code>list_handles</code> — List monitored accounts</li>
+                      <li><code>add_handle</code> — Add account to monitor</li>
+                      <li><code>remove_handle</code> — Stop monitoring account</li>
+                      <li><code>configure_handle</code> — Set mode/prompt/channel per account</li>
+                      <li><code>get_handle_config</code> — Get account settings</li>
+                      <li><code>poll_now</code> — Force immediate poll</li>
+                      <li><code>get_recent_tweets</code> — Get recent tweets</li>
+                      <li><code>get_status</code> — Get monitoring status</li>
+                      <li><code>set_poll_interval</code> — Change poll frequency</li>
+                    </ul>
+                  </div>
+                </details>
               </div>
             </div>
           )}
