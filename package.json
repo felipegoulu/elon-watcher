@@ -1,5 +1,5 @@
 {
-  "name": "elon-watcher",
+  "name": "pinchme",
   "version": "1.0.0",
   "description": "Monitor Elon Musk tweets via Apify and send to webhook",
   "main": "src/index.js",

@@ -1,11 +1,42 @@
-# Tweet Watcher
+# PinchMe
 
-Monitor X/Twitter accounts and forward new tweets to a webhook.
+Monitor X/Twitter accounts and get alerts via MCP or webhook.
 
 ## Architecture
 
 - **Backend** (Railway): Node.js server that polls Apify and sends webhooks
+- **MCP Server** (Railway): MCP interface for AI agents
 - **Dashboard** (Vercel): Next.js UI to configure handles, webhook URL, and poll interval
+
+## MCP Server
+
+**URL:** `https://pinchme-mcp-production.up.railway.app/sse`
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `authenticate` | Auth with API key (once per session) |
+| `list_handles` | List monitored accounts |
+| `add_handle` | Add account to monitor |
+| `remove_handle` | Stop monitoring account |
+| `configure_handle` | Set mode/prompt/channel per account |
+| `get_handle_config` | Get account settings |
+| `poll_now` | Force immediate poll |
+| `get_recent_tweets` | Get recent tweets |
+| `get_status` | Get monitoring status |
+| `set_poll_interval` | Change poll frequency |
+
+### Usage
+
+```bash
+# Authenticate once
+mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.authenticate' \
+  --args '{"api_key": "pk_..."}'
+
+# Then use tools without api_key
+mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.list_handles'
+```
 
 ## Backend API
 
@@ -16,44 +47,45 @@ Monitor X/Twitter accounts and forward new tweets to a webhook.
 | `/config` | PUT | Update config (restarts polling) |
 | `/status` | GET | Get full status with state |
 | `/poll` | POST | Trigger immediate poll |
+| `/mcp/activate` | POST | Mark API key as MCP-activated |
+| `/mcp/activated-keys` | GET | List MCP-activated keys |
 
 ## Deployment
 
 ### Backend (Railway)
 
-1. Push to Railway (already linked)
-2. Set env var: `APIFY_TOKEN=your_token`
-3. Optional: `PORT=3000` (default)
+1. Push to Railway
+2. Set env vars:
+   - `APIFY_TOKEN=your_token`
+   - `DATABASE_URL=postgres://...`
+
+### MCP Server (Railway)
+
+1. Root directory: `mcp-server`
+2. Set env: `API_URL=https://your-backend.up.railway.app`
 
 ### Dashboard (Vercel)
 
-1. `cd dashboard`
-2. Link to Vercel: `vercel link`
-3. Set env var: `NEXT_PUBLIC_API_URL=https://your-railway-url.up.railway.app`
-4. Deploy: `vercel --prod`
+1. Connect to GitHub repo
+2. Root directory: `dashboard`
+3. Set env: `NEXT_PUBLIC_API_URL=https://your-backend.up.railway.app`
 
 ## Local Development
 
 ```bash
 # Backend
-cd elon-watcher
 npm install
-APIFY_TOKEN=xxx npm run dev
+APIFY_TOKEN=xxx DATABASE_URL=xxx npm run dev
 
-# Dashboard (separate terminal)
+# MCP Server
+cd mcp-server
+npm install
+API_URL=http://localhost:3000 npm start
+
+# Dashboard
 cd dashboard
 npm install
 NEXT_PUBLIC_API_URL=http://localhost:3000 npm run dev
-```
-
-## Config Format
-
-```json
-{
-  "webhookUrl": "https://your-webhook.com/endpoint",
-  "handles": ["elonmusk", "sama"],
-  "pollIntervalMinutes": 15
-}
 ```
 
 ## Webhook Payload
@@ -62,19 +94,17 @@ NEXT_PUBLIC_API_URL=http://localhost:3000 npm run dev
 {
   "event": "new_tweet",
   "timestamp": "2024-01-01T00:00:00.000Z",
+  "handleConfig": {
+    "mode": "now",
+    "prompt": "",
+    "channel": ""
+  },
   "tweet": {
     "id": "...",
     "url": "...",
     "text": "...",
     "createdAt": "...",
-    "author": "username",
-    "authorName": "Display Name",
-    "replyCount": 0,
-    "retweetCount": 0,
-    "likeCount": 0,
-    "isRetweet": false,
-    "isQuote": false,
-    "isReply": false
+    "author": "username"
   }
 }
 ```
