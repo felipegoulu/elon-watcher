@@ -1,5 +1,6 @@
 import { ApifyClient } from 'apify-client';
 import { createServer } from 'http';
+import https from 'https';
 import { createHash, randomBytes } from 'crypto';
 import pg from 'pg';
 
@@ -183,8 +184,6 @@ function isValidHandleFormat(handle) {
 
 async function verifyTwitterHandle(handle) {
   // Quick check via Twitter's intent API (no auth needed, fast)
-  const https = require('https');
-  
   return new Promise((resolve) => {
     const url = `https://twitter.com/intent/user?screen_name=${handle}`;
     
