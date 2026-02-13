@@ -10,6 +10,10 @@ const OPENCLAW_CMD = process.env.OPENCLAW_CMD || 'openclaw';
 const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || 
   path.join(process.env.HOME || '/root', '.openclaw', 'openclaw.json');
 
+// Gateway HTTP mode (for Docker - no CLI needed)
+const GATEWAY_URL = process.env.GATEWAY_URL || null;  // e.g., https://your-ngrok.ngrok.io
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || null;
+
 // ============================================
 // OpenClaw Config Management
 // ============================================
@@ -85,7 +89,13 @@ function sendToOpenClaw(tweet, handleConfig = {}) {
   const message = formatTweetMessage(tweet, handleConfig);
   const mode = handleConfig.mode || 'now';
   
-  // Send to OpenClaw via CLI - uses system event to inject into main session
+  // If GATEWAY_URL is set, use HTTP mode (for Docker)
+  if (GATEWAY_URL && GATEWAY_TOKEN) {
+    sendViaGatewayHTTP(message, mode, tweet.author);
+    return;
+  }
+  
+  // Otherwise use CLI mode
   const escapedMessage = message.replace(/"/g, '\\"').replace(/\n/g, '\\n');
   const cmd = `${OPENCLAW_CMD} system event --text "${escapedMessage}" --mode ${mode}`;
   
@@ -93,7 +103,6 @@ function sendToOpenClaw(tweet, handleConfig = {}) {
     if (error) {
       console.error(`[OpenClaw] Error: ${error.message}`);
       // Fallback: write to file for OpenClaw to pick up
-      const fs = require('fs');
       const logFile = process.env.TWEET_LOG || './tweets.log';
       fs.appendFileSync(logFile, `${new Date().toISOString()} | ${message}\n`);
       console.log(`[Fallback] Written to ${logFile}`);
@@ -101,6 +110,46 @@ function sendToOpenClaw(tweet, handleConfig = {}) {
     }
     console.log(`[OpenClaw] Sent: @${tweet.author} (mode: ${mode})`);
   });
+}
+
+// Send via Gateway HTTP API (for Docker - no CLI needed)
+function sendViaGatewayHTTP(message, mode, author) {
+  const url = `${GATEWAY_URL}/api/system/event`;
+  const payload = JSON.stringify({ text: message, mode: mode });
+  
+  const urlObj = new URL(url);
+  const options = {
+    hostname: urlObj.hostname,
+    port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+    path: urlObj.pathname,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+      'Content-Length': Buffer.byteLength(payload),
+    },
+  };
+  
+  const protocol = urlObj.protocol === 'https:' ? require('https') : require('http');
+  
+  const req = protocol.request(options, (res) => {
+    let data = '';
+    res.on('data', chunk => data += chunk);
+    res.on('end', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        console.log(`[OpenClaw HTTP] Sent: @${author} (mode: ${mode})`);
+      } else {
+        console.error(`[OpenClaw HTTP] Error ${res.statusCode}: ${data}`);
+      }
+    });
+  });
+  
+  req.on('error', (error) => {
+    console.error(`[OpenClaw HTTP] Request error: ${error.message}`);
+  });
+  
+  req.write(payload);
+  req.end();
 }
 
 function formatTweetMessage(tweet, handleConfig = {}) {
