@@ -366,22 +366,32 @@ async function saveUserConfig(userId, config) {
 }
 
 // ============================================
-// Apify Tweet Scraper
+// Apify Tweet Scraper (Unlimited - for monitoring)
 // ============================================
-async function fetchLatestTweets(handles, maxItemsPerHandle = 10) {
+async function fetchLatestTweets(handles, maxItemsPerHandle = 3) {
   if (!handles || handles.length === 0) return [];
   
   console.log(`[${ts()}] Fetching tweets from: ${handles.map(h => '@' + h).join(', ')}...`);
   
+  // Get today's date for the since filter (YYYY-MM-DD)
+  const today = new Date().toISOString().split('T')[0];
+  
+  // Build query with date filter and exclude retweets
+  // Each handle gets: from:handle since:YYYY-MM-DD -filter:retweets
   const searchQuery = handles.map(h => `from:${h}`).join(' OR ');
+  const fullQuery = `(${searchQuery}) since:${today} -filter:retweets`;
   
   const input = {
-    searchTerms: [searchQuery],
+    searchTerms: [fullQuery],
     sort: 'Latest',
     maxItems: maxItemsPerHandle * handles.length,
   };
 
-  const run = await client.actor('apidojo/tweet-scraper').call(input, {
+  console.log(`[${ts()}] Query: ${fullQuery}`);
+  console.log(`[${ts()}] Max items: ${input.maxItems}`);
+
+  // Using twitter-scraper-lite (Unlimited) - no minimum, event-based pricing
+  const run = await client.actor('apidojo/twitter-scraper-lite').call(input, {
     waitSecs: 120,
   });
 
