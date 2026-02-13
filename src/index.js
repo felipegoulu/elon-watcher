@@ -22,13 +22,15 @@ let client = null;
 
 // Debug state for monitoring
 const debugState = {
-  version: '2.1.1', // Format validation only
+  version: '2.1.2', // Added webhook error logging
   startedAt: new Date().toISOString(),
   lastPollAttempt: null,
   lastPollSuccess: null,
   lastPollError: null,
   lastPollTweets: 0,
   totalPolls: 0,
+  lastWebhookError: null,
+  lastWebhookSuccess: null,
 };
 
 // ============================================
@@ -587,6 +589,8 @@ async function sendToWebhook(config, tweet, handleConfig) {
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     console.log(`[Webhook] Sent tweet ${tweet.id}`);
+    debugState.lastWebhookSuccess = new Date().toISOString();
+    debugState.lastWebhookError = null;
     
     // Log to database
     await logSentTweet(tweet, handleConfig, formattedMessage, 'sent');
@@ -594,6 +598,7 @@ async function sendToWebhook(config, tweet, handleConfig) {
     return true;
   } catch (err) {
     console.error(`[Webhook] Error:`, err.message);
+    debugState.lastWebhookError = `${err.message} (${new Date().toISOString()})`;
     
     // Log failed attempt
     await logSentTweet(tweet, handleConfig, formattedMessage, 'failed');
