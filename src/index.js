@@ -80,9 +80,21 @@ async function initDb() {
       api_key TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       name TEXT DEFAULT 'default',
+      mcp_activated BOOLEAN DEFAULT FALSE,
+      mcp_activated_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  
+  // Add mcp_activated column if it doesn't exist (migration for existing DBs)
+  await pool.query(`
+    ALTER TABLE api_keys 
+    ADD COLUMN IF NOT EXISTS mcp_activated BOOLEAN DEFAULT FALSE
+  `).catch(() => {});
+  await pool.query(`
+    ALTER TABLE api_keys 
+    ADD COLUMN IF NOT EXISTS mcp_activated_at TIMESTAMPTZ
+  `).catch(() => {});
   
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_config (
@@ -796,6 +808,43 @@ function createApiServer() {
         await deleteApiKey(apiKey, username);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
+        return;
+      }
+
+      // === MCP Activation (persists auth across server restarts) ===
+
+      // Mark API key as MCP-activated
+      if (path === '/mcp/activate' && req.method === 'POST') {
+        const apiKeyHeader = req.headers['x-api-key'];
+        if (!apiKeyHeader) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'X-API-Key header required' }));
+          return;
+        }
+        const userId = await validateApiKey(apiKeyHeader);
+        if (!userId) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid API key' }));
+          return;
+        }
+        await pool.query(
+          'UPDATE api_keys SET mcp_activated = TRUE, mcp_activated_at = NOW() WHERE api_key = $1',
+          [apiKeyHeader]
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'API key activated for MCP' }));
+        return;
+      }
+
+      // Get all MCP-activated API keys (for MCP server startup)
+      // This endpoint is intentionally public so MCP server can call it on boot
+      if (path === '/mcp/activated-keys' && req.method === 'GET') {
+        const result = await pool.query(
+          'SELECT api_key FROM api_keys WHERE mcp_activated = TRUE'
+        );
+        const keys = result.rows.map(r => r.api_key);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ keys }));
         return;
       }
 

@@ -13,6 +13,35 @@ const sessions = {};
 // Global cache of validated API keys (persists across sessions)
 const validatedApiKeys = new Set();
 
+// Load MCP-activated keys from backend on startup
+async function loadActivatedKeys() {
+  try {
+    const res = await fetch(`${API_URL}/mcp/activated-keys`);
+    const data = await res.json();
+    if (data.keys && Array.isArray(data.keys)) {
+      for (const key of data.keys) {
+        validatedApiKeys.add(key);
+      }
+      console.log(`[MCP] Loaded ${data.keys.length} activated API keys from DB`);
+    }
+  } catch (err) {
+    console.error('[MCP] Failed to load activated keys:', err.message);
+  }
+}
+
+// Mark an API key as activated in the backend (persists across restarts)
+async function activateKeyInBackend(apiKey) {
+  try {
+    await fetch(`${API_URL}/mcp/activate`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey },
+    });
+    console.log(`[MCP] Activated API key in backend`);
+  } catch (err) {
+    console.error('[MCP] Failed to activate key in backend:', err.message);
+  }
+}
+
 // Helper to call the backend API with user's API key
 async function apiCall(method, path, apiKey, body = null) {
   const url = `${API_URL}${path}`;
@@ -91,7 +120,10 @@ function createServer(sessionId) {
       lastUsedApiKey = api_key;
       validatedApiKeys.add(api_key);
       
-      return { content: [{ type: "text", text: "✓ Authenticated! You can now use other tools without api_key (persists across sessions)." }] };
+      // Persist activation in backend DB (survives server restarts)
+      await activateKeyInBackend(api_key);
+      
+      return { content: [{ type: "text", text: "✓ Authenticated! Your session persists across connections and server restarts." }] };
     }
   );
 
@@ -453,12 +485,15 @@ app.post("/messages", async (req, res) => {
   await transport.handlePostMessage(req, res);
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log("================================");
-  console.log("  PinchMe MCP Server v1.1.0");
+  console.log("  PinchMe MCP Server v1.2.0");
   console.log("================================");
   console.log(`Port: ${PORT}`);
   console.log(`API: ${API_URL}`);
   console.log(`SSE: http://localhost:${PORT}/sse`);
   console.log("================================");
+  
+  // Load previously activated API keys from backend
+  await loadActivatedKeys();
 });
