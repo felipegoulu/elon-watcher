@@ -20,6 +20,17 @@ let pool = null;
 let pollTimeout = null;
 let client = null;
 
+// Debug state for monitoring
+const debugState = {
+  version: '2.0.0-lite', // Using twitter-scraper-lite
+  startedAt: new Date().toISOString(),
+  lastPollAttempt: null,
+  lastPollSuccess: null,
+  lastPollError: null,
+  lastPollTweets: 0,
+  totalPolls: 0,
+};
+
 // ============================================
 // Database setup
 // ============================================
@@ -537,6 +548,9 @@ async function sendToWebhook(config, tweet, handleConfig) {
 // Polling logic
 // ============================================
 async function poll() {
+  debugState.lastPollAttempt = new Date().toISOString();
+  debugState.totalPolls++;
+  
   const config = await getConfig();
   
   if (config.handles.length === 0) {
@@ -547,6 +561,9 @@ async function poll() {
 
   try {
     const tweets = await fetchLatestTweets(config.handles);
+    debugState.lastPollTweets = tweets.length;
+    debugState.lastPollSuccess = new Date().toISOString();
+    debugState.lastPollError = null;
     
     if (tweets.length === 0) {
       console.log(`[${ts()}] No tweets found`);
@@ -602,6 +619,7 @@ async function poll() {
     }
 
   } catch (err) {
+    debugState.lastPollError = err.message;
     console.error(`[${ts()}] Poll error:`, err.message);
   }
 
@@ -701,6 +719,13 @@ function createApiServer() {
       if (path === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+        return;
+      }
+
+      // Debug endpoint (public - for troubleshooting)
+      if (path === '/debug' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(debugState, null, 2));
         return;
       }
 
