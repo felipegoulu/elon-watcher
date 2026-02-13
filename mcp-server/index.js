@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import express from "express";
 import cors from "cors";
+import { z } from "zod";
 
 const PORT = process.env.PORT || 3002;
 const API_URL = process.env.API_URL || "https://elon-watcher-production.up.railway.app";
@@ -30,19 +31,10 @@ function createServer() {
   server.tool(
     "list_handles",
     "List all Twitter/X handles being monitored",
-    {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" }
-      },
-      required: ["api_key"]
-    },
-    async (params, context) => {
-      console.log("[list_handles] Params:", JSON.stringify(params));
-      console.log("[list_handles] Context keys:", Object.keys(context || {}));
-      const api_key = params?.api_key;
+    { api_key: z.string().describe("Your PinchMe API key (pk_...)") },
+    async ({ api_key }) => {
       if (!api_key) {
-        return { content: [{ type: "text", text: `Error: api_key is required. Params: ${JSON.stringify(params)}, Context keys: ${Object.keys(context || {})}` }], isError: true };
+        return { content: [{ type: "text", text: "Error: api_key is required. Get one from the PinchMe dashboard." }], isError: true };
       }
       try {
         const config = await apiCall("GET", "/config", api_key);
@@ -70,12 +62,8 @@ function createServer() {
     "add_handle",
     "Add a Twitter/X handle to monitor",
     {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
-        handle: { type: "string", description: "Twitter/X username (without @)" },
-      },
-      required: ["api_key", "handle"]
+      api_key: z.string().describe("Your PinchMe API key (pk_...)"),
+      handle: z.string().describe("Twitter/X username (without @)"),
     },
     async ({ api_key, handle }) => {
       if (!api_key) {
@@ -107,12 +95,8 @@ function createServer() {
     "remove_handle",
     "Remove a Twitter/X handle from monitoring",
     {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
-        handle: { type: "string", description: "Twitter/X username to remove" },
-      },
-      required: ["api_key", "handle"]
+      api_key: z.string().describe("Your PinchMe API key (pk_...)"),
+      handle: z.string().describe("Twitter/X username to remove"),
     },
     async ({ api_key, handle }) => {
       if (!api_key) {
@@ -144,15 +128,11 @@ function createServer() {
     "configure_handle",
     "Configure alert settings for a specific handle",
     {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
-        handle: { type: "string", description: "Twitter/X username" },
-        mode: { type: "string", description: "Alert mode: 'now' (immediate) or 'next-heartbeat' (batched)" },
-        prompt: { type: "string", description: "Custom prompt/instructions for this handle's alerts" },
-        channel: { type: "string", description: "Channel to send alerts to (e.g., 'telegram', 'discord')" },
-      },
-      required: ["api_key", "handle"]
+      api_key: z.string().describe("Your PinchMe API key (pk_...)"),
+      handle: z.string().describe("Twitter/X username"),
+      mode: z.string().optional().describe("Alert mode: 'now' (immediate) or 'next-heartbeat' (batched)"),
+      prompt: z.string().optional().describe("Custom prompt/instructions for this handle's alerts"),
+      channel: z.string().optional().describe("Channel to send alerts to (e.g., 'telegram', 'discord')"),
     },
     async ({ api_key, handle, mode, prompt, channel }) => {
       if (!api_key) {
@@ -184,12 +164,8 @@ function createServer() {
     "get_handle_config",
     "Get alert configuration for a specific handle",
     {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
-        handle: { type: "string", description: "Twitter/X username" },
-      },
-      required: ["api_key", "handle"]
+      api_key: z.string().describe("Your PinchMe API key (pk_...)"),
+      handle: z.string().describe("Twitter/X username"),
     },
     async ({ api_key, handle }) => {
       if (!api_key) {
@@ -215,13 +191,7 @@ function createServer() {
   server.tool(
     "poll_now",
     "Trigger an immediate poll for new tweets",
-    {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" }
-      },
-      required: ["api_key"]
-    },
+    { api_key: z.string().describe("Your PinchMe API key (pk_...)") },
     async ({ api_key }) => {
       if (!api_key) {
         return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
@@ -243,12 +213,8 @@ function createServer() {
     "get_recent_tweets",
     "Get recently captured tweets",
     {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
-        limit: { type: "number", description: "Number of tweets (default: 10)" },
-      },
-      required: ["api_key"]
+      api_key: z.string().describe("Your PinchMe API key (pk_...)"),
+      limit: z.number().optional().describe("Number of tweets (default: 10)"),
     },
     async ({ api_key, limit = 10 }) => {
       if (!api_key) {
@@ -279,13 +245,7 @@ function createServer() {
   server.tool(
     "get_status",
     "Get current monitoring status",
-    {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" }
-      },
-      required: ["api_key"]
-    },
+    { api_key: z.string().describe("Your PinchMe API key (pk_...)") },
     async ({ api_key }) => {
       if (!api_key) {
         return { content: [{ type: "text", text: "Error: api_key is required" }], isError: true };
@@ -320,12 +280,8 @@ function createServer() {
     "set_poll_interval",
     "Change how often to check for new tweets",
     {
-      type: "object",
-      properties: {
-        api_key: { type: "string", description: "Your PinchMe API key (pk_...)" },
-        minutes: { type: "number", description: "Poll interval in minutes (1-60)" },
-      },
-      required: ["api_key", "minutes"]
+      api_key: z.string().describe("Your PinchMe API key (pk_...)"),
+      minutes: z.number().describe("Poll interval in minutes (1-60)"),
     },
     async ({ api_key, minutes }) => {
       if (!api_key) {
