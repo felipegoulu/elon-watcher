@@ -5,14 +5,16 @@ import cors from "cors";
 
 const PORT = process.env.PORT || 3002;
 const API_URL = process.env.API_URL || "https://elon-watcher-production.up.railway.app";
+const MCP_API_KEY = process.env.MCP_API_KEY || "";
 
 // Helper to call the backend API
 async function apiCall(method, path, body = null) {
   const url = `${API_URL}${path}`;
-  const options = {
-    method,
-    headers: { "Content-Type": "application/json" },
-  };
+  const headers = { "Content-Type": "application/json" };
+  if (MCP_API_KEY) {
+    headers["X-API-Key"] = MCP_API_KEY;
+  }
+  const options = { method, headers };
   if (body) options.body = JSON.stringify(body);
   const res = await fetch(url, options);
   return res.json();
@@ -164,7 +166,6 @@ function createServer() {
 // Express app
 const app = express();
 app.use(cors());
-app.use(express.json());
 
 // Store transports
 const transports = {};
@@ -215,12 +216,7 @@ app.post("/messages", async (req, res) => {
     return;
   }
   
-  try {
-    await transport.handlePostMessage(req, res);
-  } catch (error) {
-    console.error(`[MSG] Error: ${error.message}`);
-    res.status(500).json({ error: error.message });
-  }
+  await transport.handlePostMessage(req, res);
 });
 
 app.listen(PORT, () => {

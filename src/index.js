@@ -513,6 +513,14 @@ function parseBody(req) {
 }
 
 async function requireAuth(req, res) {
+  // Check for API key (for MCP server access)
+  const apiKey = req.headers['x-api-key'];
+  const MCP_API_KEY = process.env.MCP_API_KEY;
+  if (apiKey && MCP_API_KEY && apiKey === MCP_API_KEY) {
+    return 'mcp-service'; // Service account
+  }
+  
+  // Check for JWT token
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
