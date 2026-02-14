@@ -8,6 +8,17 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 
+// Load .env file manually (no external deps)
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, 'utf-8').split('\n').forEach(line => {
+    const [key, ...valueParts] = line.split('=');
+    if (key && !key.startsWith('#') && valueParts.length > 0) {
+      process.env[key.trim()] = valueParts.join('=').trim();
+    }
+  });
+}
+
 // Config
 const CONFIG = {
   clientId: process.env.X_CLIENT_ID,
