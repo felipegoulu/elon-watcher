@@ -2,28 +2,123 @@
 
 import { useState, useEffect } from 'react';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
 export default function Dashboard() {
-  const [state, setState] = useState(null);
+  const [config, setConfig] = useState({
+    hasCredentials: false,
+    hasTokens: false,
+    webhookUrl: '',
+    pollIntervalHours: 6,
+    maxTweetsPerPoll: 50,
+    openclawMode: 'next-heartbeat'
+  });
+  const [status, setStatus] = useState(null);
+  const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [polling, setPolling] = useState(false);
   const [message, setMessage] = useState(null);
+  
+  // Credentials form
+  const [credentials, setCredentials] = useState({
+    x_client_id: '',
+    x_client_secret: '',
+    access_token: '',
+    refresh_token: ''
+  });
+  const [showCredentials, setShowCredentials] = useState(false);
 
   useEffect(() => {
-    fetchState();
-    const interval = setInterval(fetchState, 30000);
+    fetchAll();
+    const interval = setInterval(fetchStatus, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  async function fetchState() {
+  async function fetchAll() {
+    await Promise.all([fetchConfig(), fetchStatus(), fetchPolls()]);
+    setLoading(false);
+  }
+
+  async function fetchConfig() {
     try {
-      const res = await fetch('/api/state');
+      const res = await fetch(`${API_URL}/api/config`);
+      if (res.ok) setConfig(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch config:', err);
+    }
+  }
+
+  async function fetchStatus() {
+    try {
+      const res = await fetch(`${API_URL}/api/status`);
+      if (res.ok) setStatus(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch status:', err);
+    }
+  }
+
+  async function fetchPolls() {
+    try {
+      const res = await fetch(`${API_URL}/api/polls?limit=10`);
+      if (res.ok) setPolls(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch polls:', err);
+    }
+  }
+
+  async function saveConfig() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const body = {
+        webhook_url: config.webhookUrl,
+        poll_interval_hours: parseInt(config.pollIntervalHours),
+        max_tweets_per_poll: parseInt(config.maxTweetsPerPoll),
+        openclaw_mode: config.openclawMode
+      };
+      
+      const res = await fetch(`${API_URL}/api/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      
       if (res.ok) {
-        setState(await res.json());
+        setMessage({ type: 'success', text: 'Config saved!' });
+        fetchConfig();
+      } else {
+        throw new Error('Failed to save');
       }
     } catch (err) {
-      console.error('Failed to fetch state:', err);
+      setMessage({ type: 'error', text: err.message });
     } finally {
-      setLoading(false);
+      setSaving(false);
+    }
+  }
+
+  async function saveCredentials() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_URL}/api/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials)
+      });
+      
+      if (res.ok) {
+        setMessage({ type: 'success', text: 'Credentials saved!' });
+        setShowCredentials(false);
+        setCredentials({ x_client_id: '', x_client_secret: '', access_token: '', refresh_token: '' });
+        fetchConfig();
+      } else {
+        throw new Error('Failed to save');
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -31,16 +126,19 @@ export default function Dashboard() {
     setPolling(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/poll', { method: 'POST' });
+      const res = await fetch(`${API_URL}/api/poll`, { method: 'POST' });
       const data = await res.json();
+      
       if (data.success) {
-        setMessage({ type: 'success', text: `Poll complete! Found ${data.newTweets} new tweets.` });
-        fetchState();
+        setMessage({ type: 'success', text: `Poll complete! Found ${data.found} tweets, ${data.new} new.` });
       } else {
         setMessage({ type: 'error', text: data.error || 'Poll failed' });
       }
+      
+      fetchStatus();
+      fetchPolls();
     } catch (err) {
-      setMessage({ type: 'error', text: 'Connection error' });
+      setMessage({ type: 'error', text: err.message });
     } finally {
       setPolling(false);
     }
@@ -48,355 +146,262 @@ export default function Dashboard() {
 
   function formatTime(iso) {
     if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleString();
-  }
-
-  function getNextPoll() {
-    // Assuming polls at 2am, 8am, 2pm, 8pm
-    const now = new Date();
-    const hours = [2, 8, 14, 20];
-    const currentHour = now.getHours();
-    
-    let nextHour = hours.find(h => h > currentHour);
-    if (!nextHour) nextHour = hours[0]; // tomorrow 2am
-    
-    const next = new Date(now);
-    if (nextHour <= currentHour) next.setDate(next.getDate() + 1);
-    next.setHours(nextHour, 0, 0, 0);
-    
-    return next.toLocaleString();
+    return new Date(iso).toLocaleString();
   }
 
   if (loading) {
-    return (
-      <div className="page">
-        <div className="loading">Loading...</div>
-        <style jsx>{styles}</style>
-      </div>
-    );
+    return <div style={styles.page}><div style={styles.loading}>Loading...</div></div>;
   }
 
   return (
-    <div className="page">
-      <nav className="nav">
-        <span className="nav-title">📱 Timeline Watcher</span>
+    <div style={styles.page}>
+      <nav style={styles.nav}>
+        <span style={styles.navTitle}>📱 Timeline Watcher</span>
       </nav>
 
-      <main className="main">
+      <main style={styles.main}>
         {message && (
-          <div className={`toast ${message.type}`}>
+          <div style={{...styles.toast, ...(message.type === 'error' ? styles.toastError : styles.toastSuccess)}}>
             {message.text}
-            <button onClick={() => setMessage(null)}>×</button>
+            <button style={styles.toastClose} onClick={() => setMessage(null)}>×</button>
           </div>
         )}
 
-        <div className="section">
-          <div className="section-header">
-            <h2>Status</h2>
-            <span className="status-badge online">● Active</span>
+        {/* Status */}
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>Status</h2>
+            <span style={{...styles.badge, ...(status?.configured ? styles.badgeGreen : styles.badgeRed)}}>
+              {status?.configured ? '● Configured' : '○ Not configured'}
+            </span>
           </div>
-          <div className="section-body">
-            <div className="status-grid">
-              <div className="status-item">
-                <span className="status-label">Last Poll</span>
-                <span className="status-value">{formatTime(state?.lastPoll)}</span>
+          <div style={styles.sectionBody}>
+            <div style={styles.grid}>
+              <div style={styles.stat}>
+                <span style={styles.statLabel}>Last Poll</span>
+                <span style={styles.statValue}>
+                  {status?.lastPoll ? formatTime(status.lastPoll.created_at) : '—'}
+                </span>
               </div>
-              <div className="status-item">
-                <span className="status-label">Next Poll</span>
-                <span className="status-value">{getNextPoll()}</span>
+              <div style={styles.stat}>
+                <span style={styles.statLabel}>Tweets Tracked</span>
+                <span style={styles.statValue}>{status?.seenTweets || 0}</span>
               </div>
-              <div className="status-item">
-                <span className="status-label">Tweets Sent</span>
-                <span className="status-value">{state?.lastCount || 0} last batch</span>
+              <div style={styles.stat}>
+                <span style={styles.statLabel}>Poll Interval</span>
+                <span style={styles.statValue}>{status?.pollIntervalHours || 6}h</span>
               </div>
-              <div className="status-item">
-                <span className="status-label">Total Tracked</span>
-                <span className="status-value">{state?.seenTweets?.length || 0} tweets</span>
+              <div style={styles.stat}>
+                <span style={styles.statLabel}>Last Result</span>
+                <span style={styles.statValue}>
+                  {status?.lastPoll ? `${status.lastPoll.tweets_new} new` : '—'}
+                </span>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="section">
-          <div className="section-header">
-            <h2>Schedule</h2>
+        {/* Credentials */}
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>X API Credentials</h2>
+            <button style={styles.btnSmall} onClick={() => setShowCredentials(!showCredentials)}>
+              {showCredentials ? 'Hide' : config.hasCredentials ? 'Update' : 'Setup'}
+            </button>
           </div>
-          <div className="section-body">
-            <p className="hint">Polls run automatically every 6 hours via cron:</p>
-            <div className="schedule-list">
-              <div className="schedule-item">🌙 2:00 AM</div>
-              <div className="schedule-item">☀️ 8:00 AM</div>
-              <div className="schedule-item">🌤️ 2:00 PM</div>
-              <div className="schedule-item">🌆 8:00 PM</div>
+          {showCredentials && (
+            <div style={styles.sectionBody}>
+              <label style={styles.label}>Client ID</label>
+              <input
+                style={styles.input}
+                type="text"
+                value={credentials.x_client_id}
+                onChange={e => setCredentials({...credentials, x_client_id: e.target.value})}
+                placeholder="From X Developer Portal"
+              />
+              
+              <label style={styles.label}>Client Secret</label>
+              <input
+                style={styles.input}
+                type="password"
+                value={credentials.x_client_secret}
+                onChange={e => setCredentials({...credentials, x_client_secret: e.target.value})}
+                placeholder="From X Developer Portal"
+              />
+              
+              <label style={styles.label}>Access Token</label>
+              <input
+                style={styles.input}
+                type="password"
+                value={credentials.access_token}
+                onChange={e => setCredentials({...credentials, access_token: e.target.value})}
+                placeholder="From OAuth flow"
+              />
+              
+              <label style={styles.label}>Refresh Token</label>
+              <input
+                style={styles.input}
+                type="password"
+                value={credentials.refresh_token}
+                onChange={e => setCredentials({...credentials, refresh_token: e.target.value})}
+                placeholder="From OAuth flow"
+              />
+              
+              <button style={styles.btnPrimary} onClick={saveCredentials} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Credentials'}
+              </button>
             </div>
-            <p className="hint" style={{marginTop: '16px'}}>
-              Each poll fetches ~50 tweets from your timeline and sends them to OpenClaw 
-              as a batch system event with mode <code>next-heartbeat</code>.
-            </p>
-          </div>
+          )}
+          {!showCredentials && (
+            <div style={styles.sectionBody}>
+              <div style={styles.statusRow}>
+                <span>API Keys: {config.hasCredentials ? '✅ Set' : '❌ Missing'}</span>
+                <span>OAuth Tokens: {config.hasTokens ? '✅ Set' : '❌ Missing'}</span>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="section">
-          <div className="section-header">
-            <h2>Manual Poll</h2>
+        {/* Settings */}
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>Settings</h2>
           </div>
-          <div className="section-body">
-            <p className="hint">Trigger a poll manually to fetch your latest timeline.</p>
-            <button 
-              className="btn-primary" 
-              onClick={triggerPoll}
-              disabled={polling}
+          <div style={styles.sectionBody}>
+            <label style={styles.label}>Webhook URL (your OpenClaw server)</label>
+            <input
+              style={styles.input}
+              type="url"
+              value={config.webhookUrl || ''}
+              onChange={e => setConfig({...config, webhookUrl: e.target.value})}
+              placeholder="http://your-ec2:3001/webhook"
+            />
+            
+            <label style={styles.label}>Poll Interval (hours)</label>
+            <select
+              style={styles.select}
+              value={config.pollIntervalHours}
+              onChange={e => setConfig({...config, pollIntervalHours: e.target.value})}
             >
+              <option value="1">Every 1 hour</option>
+              <option value="2">Every 2 hours</option>
+              <option value="4">Every 4 hours</option>
+              <option value="6">Every 6 hours</option>
+              <option value="12">Every 12 hours</option>
+              <option value="24">Every 24 hours</option>
+            </select>
+            
+            <label style={styles.label}>Max Tweets per Poll</label>
+            <input
+              style={styles.input}
+              type="number"
+              min="10"
+              max="100"
+              value={config.maxTweetsPerPoll}
+              onChange={e => setConfig({...config, maxTweetsPerPoll: e.target.value})}
+            />
+            
+            <label style={styles.label}>OpenClaw Mode</label>
+            <select
+              style={styles.select}
+              value={config.openclawMode}
+              onChange={e => setConfig({...config, openclawMode: e.target.value})}
+            >
+              <option value="next-heartbeat">Next Heartbeat (batched)</option>
+              <option value="now">Now (immediate)</option>
+            </select>
+            
+            <button style={styles.btnPrimary} onClick={saveConfig} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>Manual Poll</h2>
+          </div>
+          <div style={styles.sectionBody}>
+            <p style={styles.hint}>Trigger a poll manually to fetch your latest timeline.</p>
+            <button style={styles.btnPrimary} onClick={triggerPoll} disabled={polling || !status?.configured}>
               {polling ? 'Polling...' : 'Poll Now'}
             </button>
           </div>
         </div>
 
-        <div className="section">
-          <div className="section-header">
-            <h2>How it works</h2>
+        {/* History */}
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>Recent Polls</h2>
+            <button style={styles.btnSmall} onClick={fetchPolls}>Refresh</button>
           </div>
-          <div className="section-body">
-            <div className="flow">
-              <div className="flow-step">
-                <span className="flow-icon">🐦</span>
-                <span className="flow-text">X API</span>
+          <div style={styles.sectionBody}>
+            {polls.length === 0 ? (
+              <p style={styles.hint}>No polls yet</p>
+            ) : (
+              <div style={styles.pollList}>
+                {polls.map((p, i) => (
+                  <div key={i} style={styles.pollItem}>
+                    <span style={styles.pollTime}>{formatTime(p.created_at)}</span>
+                    <span style={{...styles.pollStatus, color: p.status === 'success' ? '#0c8' : '#f66'}}>
+                      {p.status}
+                    </span>
+                    <span style={styles.pollCount}>
+                      {p.tweets_found} found, {p.tweets_new} new
+                    </span>
+                    {p.error && <span style={styles.pollError}>{p.error}</span>}
+                  </div>
+                ))}
               </div>
-              <span className="flow-arrow">→</span>
-              <div className="flow-step">
-                <span className="flow-icon">📥</span>
-                <span className="flow-text">Timeline Watcher</span>
-              </div>
-              <span className="flow-arrow">→</span>
-              <div className="flow-step">
-                <span className="flow-icon">🦞</span>
-                <span className="flow-text">OpenClaw</span>
-              </div>
-              <span className="flow-arrow">→</span>
-              <div className="flow-step">
-                <span className="flow-icon">💬</span>
-                <span className="flow-text">You</span>
-              </div>
-            </div>
-            <p className="hint" style={{marginTop: '16px', textAlign: 'center'}}>
-              OpenClaw reviews your timeline during heartbeat and tells you what's interesting.
-            </p>
+            )}
           </div>
         </div>
       </main>
-
-      <style jsx>{styles}</style>
     </div>
   );
 }
 
-const styles = `
-  .page {
-    min-height: 100vh;
-    background: #000;
-    color: #fafafa;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  }
-
-  .nav {
-    display: flex;
-    align-items: center;
-    padding: 0 24px;
-    height: 64px;
-    border-bottom: 1px solid #333;
-  }
-
-  .nav-title {
-    font-size: 16px;
-    font-weight: 600;
-  }
-
-  .main {
-    max-width: 600px;
-    margin: 0 auto;
-    padding: 32px 24px;
-  }
-
-  .section {
-    border: 1px solid #333;
-    border-radius: 12px;
-    margin-bottom: 24px;
-    background: #0a0a0a;
-  }
-
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid #333;
-  }
-
-  .section-header h2 {
-    font-size: 14px;
-    font-weight: 500;
-    margin: 0;
-  }
-
-  .section-body {
-    padding: 20px;
-  }
-
-  .status-badge {
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 12px;
-  }
-
-  .status-badge.online {
-    background: rgba(0, 200, 100, 0.15);
-    color: #0c8;
-  }
-
-  .status-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-
-  .status-item {
-    padding: 12px;
-    background: #111;
-    border-radius: 8px;
-  }
-
-  .status-label {
-    display: block;
-    font-size: 12px;
-    color: #666;
-    margin-bottom: 4px;
-  }
-
-  .status-value {
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .hint {
-    font-size: 13px;
-    color: #888;
-    line-height: 1.5;
-  }
-
-  .hint code {
-    background: #1a1a1a;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: 'Monaco', monospace;
-    font-size: 12px;
-  }
-
-  .schedule-list {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-top: 12px;
-  }
-
-  .schedule-item {
-    padding: 12px;
-    background: #111;
-    border-radius: 8px;
-    text-align: center;
-    font-size: 13px;
-  }
-
-  .btn-primary {
-    padding: 12px 24px;
-    font-size: 14px;
-    font-weight: 500;
-    background: #fff;
-    color: #000;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: opacity 0.15s;
-    margin-top: 12px;
-  }
-
-  .btn-primary:hover {
-    opacity: 0.9;
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .toast {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    border-radius: 8px;
-    margin-bottom: 24px;
-    font-size: 14px;
-  }
-
-  .toast.success {
-    background: rgba(0, 200, 100, 0.1);
-    border: 1px solid rgba(0, 200, 100, 0.3);
-    color: #0c8;
-  }
-
-  .toast.error {
-    background: rgba(255, 0, 0, 0.1);
-    border: 1px solid rgba(255, 0, 0, 0.3);
-    color: #f66;
-  }
-
-  .toast button {
-    background: none;
-    border: none;
-    color: inherit;
-    font-size: 18px;
-    cursor: pointer;
-    opacity: 0.7;
-  }
-
-  .flow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 20px 0;
-  }
-
-  .flow-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 12px 16px;
-    background: #111;
-    border-radius: 8px;
-  }
-
-  .flow-icon {
-    font-size: 24px;
-  }
-
-  .flow-text {
-    font-size: 11px;
-    color: #888;
-  }
-
-  .flow-arrow {
-    color: #444;
-    font-size: 18px;
-  }
-
-  .loading {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #666;
-  }
-`;
+const styles = {
+  page: { minHeight: '100vh', background: '#000', color: '#fafafa', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' },
+  nav: { display: 'flex', alignItems: 'center', padding: '0 24px', height: 64, borderBottom: '1px solid #333' },
+  navTitle: { fontSize: 16, fontWeight: 600 },
+  main: { maxWidth: 640, margin: '0 auto', padding: '32px 24px' },
+  loading: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' },
+  
+  section: { border: '1px solid #333', borderRadius: 12, marginBottom: 24, background: '#0a0a0a' },
+  sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #333' },
+  sectionTitle: { fontSize: 14, fontWeight: 500, margin: 0 },
+  sectionBody: { padding: 20 },
+  
+  badge: { fontSize: 12, padding: '4px 10px', borderRadius: 12 },
+  badgeGreen: { background: 'rgba(0,200,100,0.15)', color: '#0c8' },
+  badgeRed: { background: 'rgba(255,0,0,0.15)', color: '#f66' },
+  
+  grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
+  stat: { padding: 12, background: '#111', borderRadius: 8 },
+  statLabel: { display: 'block', fontSize: 12, color: '#666', marginBottom: 4 },
+  statValue: { fontSize: 14, fontWeight: 500 },
+  
+  label: { display: 'block', fontSize: 13, color: '#888', marginBottom: 8, marginTop: 16 },
+  input: { width: '100%', padding: '10px 12px', fontSize: 14, background: '#111', border: '1px solid #333', borderRadius: 6, color: '#fafafa', outline: 'none', boxSizing: 'border-box' },
+  select: { width: '100%', padding: '10px 12px', fontSize: 14, background: '#111', border: '1px solid #333', borderRadius: 6, color: '#fafafa', outline: 'none', cursor: 'pointer' },
+  
+  btnPrimary: { marginTop: 20, padding: '12px 24px', fontSize: 14, fontWeight: 500, background: '#fff', color: '#000', border: 'none', borderRadius: 8, cursor: 'pointer' },
+  btnSmall: { padding: '6px 12px', fontSize: 12, background: 'transparent', color: '#888', border: '1px solid #333', borderRadius: 6, cursor: 'pointer' },
+  
+  hint: { fontSize: 13, color: '#888', margin: '0 0 12px' },
+  statusRow: { display: 'flex', gap: 24, fontSize: 14 },
+  
+  toast: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: 8, marginBottom: 24, fontSize: 14 },
+  toastSuccess: { background: 'rgba(0,200,100,0.1)', border: '1px solid rgba(0,200,100,0.3)', color: '#0c8' },
+  toastError: { background: 'rgba(255,0,0,0.1)', border: '1px solid rgba(255,0,0,0.3)', color: '#f66' },
+  toastClose: { background: 'none', border: 'none', color: 'inherit', fontSize: 18, cursor: 'pointer', opacity: 0.7 },
+  
+  pollList: { display: 'flex', flexDirection: 'column', gap: 8 },
+  pollItem: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: '#111', borderRadius: 8, fontSize: 13 },
+  pollTime: { color: '#666', minWidth: 150 },
+  pollStatus: { fontWeight: 500 },
+  pollCount: { color: '#888' },
+  pollError: { color: '#f66', marginLeft: 'auto' }
+};

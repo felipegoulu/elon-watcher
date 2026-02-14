@@ -1,14 +1,12 @@
 export const metadata = {
-  title: 'PinchMe',
-  description: 'Real-time X monitoring',
+  title: 'Timeline Watcher',
+  description: 'Monitor your X timeline',
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0 }}>
-        {children}
-      </body>
+      <body style={{ margin: 0, background: '#000', color: '#fff' }}>{children}</body>
     </html>
   );
 }
