@@ -2,377 +2,85 @@
 
 import { useState, useEffect } from 'react';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-
 export default function Dashboard() {
-  const [auth, setAuth] = useState({ checked: false, authenticated: false, username: '' });
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-  const [loginError, setLoginError] = useState('');
-  
-  const [config, setConfig] = useState({
-    webhookUrl: '',
-    handles: [],
-    pollIntervalMinutes: 15,
-  });
-  const [newHandle, setNewHandle] = useState('');
-  const [handlePreview, setHandlePreview] = useState(null);
-  const [status, setStatus] = useState(null);
+  const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [polling, setPolling] = useState(false);
   const [message, setMessage] = useState(null);
-  
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
-  const [passwordError, setPasswordError] = useState('');
-  const [changingPassword, setChangingPassword] = useState(false);
-  
-  const [handleConfigs, setHandleConfigs] = useState({});
-  const [editingHandle, setEditingHandle] = useState(null);
-  const [handleConfigForm, setHandleConfigForm] = useState({ mode: 'now', prompt: '', channel: '' });
-  
-  // OpenClaw config
-  const [openclawConfig, setOpenclawConfig] = useState(null);
-  const [openclawHeartbeat, setOpenclawHeartbeat] = useState(null);
-  const [savingOpenclaw, setSavingOpenclaw] = useState(false);
-  
-  // Sent tweets log
-  const [sentTweets, setSentTweets] = useState([]);
-  const [showSentTweets, setShowSentTweets] = useState(false);
-  
-  // API Keys
-  const [apiKeys, setApiKeys] = useState([]);
-  const [showApiKeys, setShowApiKeys] = useState(false);
-  const [newKeyName, setNewKeyName] = useState('');
-  const [generatingKey, setGeneratingKey] = useState(false);
-  const [newlyGeneratedKey, setNewlyGeneratedKey] = useState(null);
-
-  useEffect(() => { checkAuth(); }, []);
 
   useEffect(() => {
-    if (!newHandle || newHandle.length < 2) { setHandlePreview(null); return; }
-    const timer = setTimeout(() => {
-      const clean = newHandle.replace(/^@/, '').trim();
-      if (clean) setHandlePreview({ handle: clean, url: `https://x.com/${clean}` });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [newHandle]);
+    fetchState();
+    const interval = setInterval(fetchState, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
-  function getToken() { return typeof window !== 'undefined' ? localStorage.getItem('token') : null; }
-  function setToken(t) { localStorage.setItem('token', t); }
-  function clearToken() { localStorage.removeItem('token'); }
-  function authHeaders() { const t = getToken(); return t ? { Authorization: `Bearer ${t}` } : {}; }
-
-  async function checkAuth() {
-    const token = getToken();
-    if (!token) { setAuth({ checked: true, authenticated: false, username: '' }); setLoading(false); return; }
+  async function fetchState() {
     try {
-      const res = await fetch(`${API_URL}/auth/me`, { headers: authHeaders() });
-      const data = await res.json();
-      if (data.authenticated) {
-        setAuth({ checked: true, authenticated: true, username: data.username });
-        fetchConfig(); fetchStatus(); fetchHandleConfigs();
-      } else { clearToken(); setAuth({ checked: true, authenticated: false, username: '' }); setLoading(false); }
-    } catch { clearToken(); setAuth({ checked: true, authenticated: false, username: '' }); setLoading(false); }
-  }
-
-  async function handleLogin(e) {
-    e.preventDefault(); setLoginError('');
-    try {
-      const res = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginForm),
-      });
-      const data = await res.json();
-      if (data.success) { setToken(data.token); setAuth({ checked: true, authenticated: true, username: data.username }); fetchConfig(); fetchStatus(); fetchHandleConfigs(); }
-      else setLoginError(data.error || 'Login failed');
-    } catch { setLoginError('Connection error'); }
-  }
-
-  async function handleLogout() {
-    try { await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: authHeaders() }); } catch {}
-    clearToken(); setAuth({ checked: true, authenticated: false, username: '' });
-  }
-
-  async function handleChangePassword(e) {
-    e.preventDefault(); setPasswordError('');
-    if (passwordForm.new !== passwordForm.confirm) { setPasswordError('Passwords do not match'); return; }
-    if (passwordForm.new.length < 4) { setPasswordError('Min 4 characters'); return; }
-    setChangingPassword(true);
-    try {
-      const res = await fetch(`${API_URL}/auth/password`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ currentPassword: passwordForm.current, newPassword: passwordForm.new }),
-      });
-      const data = await res.json();
-      if (data.success) { setShowPasswordModal(false); setPasswordForm({ current: '', new: '', confirm: '' }); setMessage({ type: 'success', text: 'Password updated' }); }
-      else setPasswordError(data.error || 'Failed');
-    } catch { setPasswordError('Connection error'); }
-    finally { setChangingPassword(false); }
-  }
-
-  async function fetchConfig() {
-    try {
-      const res = await fetch(`${API_URL}/config`, { headers: authHeaders() });
+      const res = await fetch('/api/state');
       if (res.ok) {
-        const cfg = await res.json();
-        setConfig(cfg);
-        // Fetch OpenClaw config via API proxy (avoids mixed content)
-        if (cfg.webhookUrl) {
-          try {
-            const ocRes = await fetch(`${API_URL}/openclaw/config`, { headers: authHeaders() });
-            if (ocRes.ok) {
-              setOpenclawConfig(await ocRes.json());
-            }
-          } catch (e) { console.log('OpenClaw config fetch failed:', e); }
-        }
-      }
-      else if (res.status === 401) { clearToken(); setAuth({ checked: true, authenticated: false, username: '' }); }
-    } catch { setMessage({ type: 'error', text: 'Failed to load config' }); }
-    finally { setLoading(false); }
-  }
-
-  async function fetchStatus() {
-    try { const res = await fetch(`${API_URL}/status`, { headers: authHeaders() }); if (res.ok) setStatus(await res.json()); } catch {}
-  }
-
-  async function fetchHandleConfigs() {
-    try {
-      const res = await fetch(`${API_URL}/handle-config`, { headers: authHeaders() });
-      if (res.ok) {
-        const configs = await res.json();
-        const configMap = {};
-        configs.forEach(c => { configMap[c.handle] = c; });
-        setHandleConfigs(configMap);
-      }
-    } catch {}
-  }
-
-  async function saveHandleConfig(handle) {
-    try {
-      const res = await fetch(`${API_URL}/handle-config/${handle}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(handleConfigForm),
-      });
-      if (res.ok) {
-        setMessage({ type: 'success', text: `Config saved for @${handle}` });
-        fetchHandleConfigs();
-        setEditingHandle(null);
-      } else {
-        const err = await res.json();
-        setMessage({ type: 'error', text: err.error || 'Failed to save' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: 'Connection error' });
-    }
-  }
-
-  function openHandleConfig(handle) {
-    const existing = handleConfigs[handle] || { mode: 'now', prompt: '', channel: '' };
-    setHandleConfigForm({ mode: existing.mode || 'now', prompt: existing.prompt || '', channel: existing.channel || '' });
-    setEditingHandle(handle);
-  }
-
-  // OpenClaw config functions (via API proxy to avoid mixed content)
-  async function fetchOpenclawConfig() {
-    if (!config.webhookUrl) return;
-    try {
-      const res = await fetch(`${API_URL}/openclaw/config`, { headers: authHeaders() });
-      if (res.ok) {
-        setOpenclawConfig(await res.json());
-        fetchOpenclawHeartbeat();
+        setState(await res.json());
       }
     } catch (err) {
-      console.log('OpenClaw config not available:', err.message);
-    }
-  }
-
-  async function fetchOpenclawHeartbeat() {
-    if (!config.webhookUrl) return;
-    try {
-      const res = await fetch(`${API_URL}/openclaw/heartbeat`, { headers: authHeaders() });
-      if (res.ok) setOpenclawHeartbeat(await res.json());
-    } catch {}
-  }
-
-  async function saveOpenclawConfig(newConfig) {
-    if (!config.webhookUrl) return;
-    setSavingOpenclaw(true);
-    try {
-      const res = await fetch(`${API_URL}/openclaw/config`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(newConfig),
-      });
-      if (res.ok) {
-        setMessage({ type: 'success', text: 'OpenClaw config saved & gateway restarted' });
-        setOpenclawConfig(newConfig);
-        setTimeout(fetchOpenclawHeartbeat, 2000);
-      } else {
-        setMessage({ type: 'error', text: 'Failed to save OpenClaw config' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: 'Connection error' });
+      console.error('Failed to fetch state:', err);
     } finally {
-      setSavingOpenclaw(false);
+      setLoading(false);
     }
-  }
-
-  function updateHeartbeatConfig(key, value) {
-    if (!openclawConfig) return;
-    const updated = { ...openclawConfig };
-    if (!updated.agents) updated.agents = {};
-    if (!updated.agents.defaults) updated.agents.defaults = {};
-    if (!updated.agents.defaults.heartbeat) updated.agents.defaults.heartbeat = {};
-    updated.agents.defaults.heartbeat[key] = value;
-    setOpenclawConfig(updated);
-  }
-
-  function updateChannelHeartbeat(channel, key, value) {
-    if (!openclawConfig) return;
-    const updated = { ...openclawConfig };
-    if (!updated.channels) updated.channels = {};
-    if (!updated.channels[channel]) updated.channels[channel] = {};
-    if (!updated.channels[channel].heartbeat) updated.channels[channel].heartbeat = {};
-    updated.channels[channel].heartbeat[key] = value;
-    setOpenclawConfig(updated);
-  }
-
-  // Fetch openclaw config when webhook URL is available
-  useEffect(() => {
-    if (config.webhookUrl) fetchOpenclawConfig();
-  }, [config.webhookUrl]);
-
-  // Fetch sent tweets log
-  async function fetchSentTweets() {
-    try {
-      const res = await fetch(`${API_URL}/sent-tweets?limit=50`, { headers: authHeaders() });
-      if (res.ok) setSentTweets(await res.json());
-    } catch (err) {
-      console.log('Failed to fetch sent tweets:', err.message);
-    }
-  }
-
-  // API Key management
-  async function fetchApiKeys() {
-    try {
-      const res = await fetch(`${API_URL}/api-keys`, { headers: authHeaders() });
-      if (res.ok) setApiKeys(await res.json());
-    } catch (err) {
-      console.log('Failed to fetch API keys:', err.message);
-    }
-  }
-
-  async function generateApiKey() {
-    setGeneratingKey(true);
-    setNewlyGeneratedKey(null);
-    try {
-      const res = await fetch(`${API_URL}/api-keys`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ name: newKeyName || 'default' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setNewlyGeneratedKey(data.api_key);
-        setNewKeyName('');
-        fetchApiKeys();
-        setMessage({ type: 'success', text: 'API key generated! Copy it now, it won\'t be shown again.' });
-      } else {
-        const err = await res.json();
-        setMessage({ type: 'error', text: err.error || 'Failed to generate key' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: 'Connection error' });
-    } finally {
-      setGeneratingKey(false);
-    }
-  }
-
-  async function deleteApiKey(apiKey) {
-    if (!confirm('Delete this API key? This cannot be undone.')) return;
-    try {
-      const res = await fetch(`${API_URL}/api-keys/${encodeURIComponent(apiKey)}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
-      });
-      if (res.ok) {
-        setMessage({ type: 'success', text: 'API key deleted' });
-        fetchApiKeys();
-      } else {
-        setMessage({ type: 'error', text: 'Failed to delete key' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: 'Connection error' });
-    }
-  }
-
-  function copyToClipboard(text) {
-    navigator.clipboard.writeText(text);
-    setMessage({ type: 'success', text: 'Copied to clipboard!' });
-  }
-
-  async function saveConfig() {
-    setSaving(true); setMessage(null);
-    try {
-      const res = await fetch(`${API_URL}/config`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(config),
-      });
-      if (res.ok) { setMessage({ type: 'success', text: 'Saved' }); fetchStatus(); }
-      else { const err = await res.json(); setMessage({ type: 'error', text: err.error || 'Failed' }); }
-    } catch { setMessage({ type: 'error', text: 'Connection error' }); }
-    finally { setSaving(false); }
   }
 
   async function triggerPoll() {
-    try { await fetch(`${API_URL}/poll`, { method: 'POST', headers: authHeaders() }); setMessage({ type: 'success', text: 'Poll started' }); setTimeout(fetchStatus, 3000); }
-    catch { setMessage({ type: 'error', text: 'Failed' }); }
+    setPolling(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/poll', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setMessage({ type: 'success', text: `Poll complete! Found ${data.newTweets} new tweets.` });
+        fetchState();
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Poll failed' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Connection error' });
+    } finally {
+      setPolling(false);
+    }
   }
 
-  function addHandle() {
-    const h = newHandle.replace(/^@/, '').trim().toLowerCase();
-    if (h && !config.handles.includes(h)) { setConfig({ ...config, handles: [...config.handles, h] }); setNewHandle(''); setHandlePreview(null); }
+  function formatTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString();
   }
 
-  function removeHandle(h) { setConfig({ ...config, handles: config.handles.filter(x => x !== h) }); }
+  function getNextPoll() {
+    // Assuming polls at 2am, 8am, 2pm, 8pm
+    const now = new Date();
+    const hours = [2, 8, 14, 20];
+    const currentHour = now.getHours();
+    
+    let nextHour = hours.find(h => h > currentHour);
+    if (!nextHour) nextHour = hours[0]; // tomorrow 2am
+    
+    const next = new Date(now);
+    if (nextHour <= currentHour) next.setDate(next.getDate() + 1);
+    next.setHours(nextHour, 0, 0, 0);
+    
+    return next.toLocaleString();
+  }
 
-  // Login
-  if (auth.checked && !auth.authenticated) {
+  if (loading) {
     return (
       <div className="page">
-        <div className="login-container">
-          <div className="login-box">
-            <h1>PinchMe</h1>
-            <p className="subtitle">Sign in to continue</p>
-            {loginError && <div className="error-msg">{loginError}</div>}
-            <form onSubmit={handleLogin}>
-              <input type="text" placeholder="Username" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} />
-              <input type="password" placeholder="Password" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
-              <button type="submit" className="btn-primary">Continue</button>
-            </form>
-          </div>
-        </div>
+        <div className="loading">Loading...</div>
         <style jsx>{styles}</style>
       </div>
     );
   }
 
-  if (!auth.checked || loading) {
-    return (<div className="page"><div className="loading">Loading...</div><style jsx>{styles}</style></div>);
-  }
-
   return (
     <div className="page">
       <nav className="nav">
-        <div className="nav-left">
-          <span className="nav-title">PinchMe</span>
-        </div>
-        <div className="nav-right">
-          <button className="nav-btn" onClick={() => setShowPasswordModal(true)}>Settings</button>
-          <div className="nav-user">{auth.username}</div>
-          <button className="nav-btn" onClick={handleLogout}>Logout</button>
-        </div>
+        <span className="nav-title">📱 Timeline Watcher</span>
       </nav>
 
       <main className="main">
@@ -385,440 +93,98 @@ export default function Dashboard() {
 
         <div className="section">
           <div className="section-header">
-            <h2>Webhook</h2>
+            <h2>Status</h2>
+            <span className="status-badge online">● Active</span>
           </div>
           <div className="section-body">
-            <label>Endpoint URL</label>
-            <input 
-              type="url" 
-              value={config.webhookUrl} 
-              onChange={e => setConfig({...config, webhookUrl: e.target.value})}
-              placeholder="https://example.com/webhook"
-            />
-            <span className="hint">New tweets will be sent here as POST requests</span>
-          </div>
-        </div>
-
-        <div className="section">
-          <div className="section-header">
-            <h2>Accounts</h2>
-            <span className="count">{config.handles.length}</span>
-          </div>
-          <div className="section-body">
-            <label>Add Account</label>
-            <div className="input-row">
-              <div className="handle-input-wrap">
-                <span className="at">@</span>
-                <input 
-                  type="text" 
-                  value={newHandle} 
-                  onChange={e => setNewHandle(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addHandle())}
-                  placeholder="username"
-                />
+            <div className="status-grid">
+              <div className="status-item">
+                <span className="status-label">Last Poll</span>
+                <span className="status-value">{formatTime(state?.lastPoll)}</span>
               </div>
-              <button className="btn-secondary" onClick={addHandle} disabled={!newHandle.trim()}>Add</button>
-            </div>
-            
-            {handlePreview && (
-              <div className="preview">
-                <span>@{handlePreview.handle}</span>
-                <a href={handlePreview.url} target="_blank" rel="noopener noreferrer">View on X →</a>
+              <div className="status-item">
+                <span className="status-label">Next Poll</span>
+                <span className="status-value">{getNextPoll()}</span>
               </div>
-            )}
-
-            <div className="handles">
-              {config.handles.length === 0 ? (
-                <div className="empty">No accounts added</div>
-              ) : (
-                config.handles.map(h => (
-                  <div key={h} className="handle-tag">
-                    <a href={`https://x.com/${h}`} target="_blank" rel="noopener noreferrer">@{h}</a>
-                    {handleConfigs[h]?.prompt && <span className="config-badge" title="Has custom prompt">⚡</span>}
-                    <button className="config-btn" onClick={() => openHandleConfig(h)} title="Configure">⚙</button>
-                    <button onClick={() => removeHandle(h)}>×</button>
-                  </div>
-                ))
-              )}
+              <div className="status-item">
+                <span className="status-label">Tweets Sent</span>
+                <span className="status-value">{state?.lastCount || 0} last batch</span>
+              </div>
+              <div className="status-item">
+                <span className="status-label">Total Tracked</span>
+                <span className="status-value">{state?.seenTweets?.length || 0} tweets</span>
+              </div>
             </div>
           </div>
         </div>
 
         <div className="section">
           <div className="section-header">
-            <h2>Polling</h2>
-            <span className="count">{config.pollIntervalMinutes}m</span>
+            <h2>Schedule</h2>
           </div>
           <div className="section-body">
-            <label>Interval</label>
-            <input 
-              type="range" 
-              min="1" 
-              max="60" 
-              value={config.pollIntervalMinutes}
-              onChange={e => setConfig({...config, pollIntervalMinutes: parseInt(e.target.value)})}
-            />
-            <div className="range-labels">
-              <span>1 min</span>
-              <span>60 min</span>
+            <p className="hint">Polls run automatically every 6 hours via cron:</p>
+            <div className="schedule-list">
+              <div className="schedule-item">🌙 2:00 AM</div>
+              <div className="schedule-item">☀️ 8:00 AM</div>
+              <div className="schedule-item">🌤️ 2:00 PM</div>
+              <div className="schedule-item">🌆 8:00 PM</div>
             </div>
-            <span className="hint">
-              Estimated: ~${(0.40 * Math.max(1, config.handles.length) * (60 / config.pollIntervalMinutes) * 24).toFixed(2)}/day
-            </span>
+            <p className="hint" style={{marginTop: '16px'}}>
+              Each poll fetches ~50 tweets from your timeline and sends them to OpenClaw 
+              as a batch system event with mode <code>next-heartbeat</code>.
+            </p>
           </div>
         </div>
 
-        {status && (
-          <div className="section status-section">
-            <div className="status-row">
-              <div className="status-item">
-                <span className="status-label">Status</span>
-                <span className="status-value online">● Online</span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">Tracking</span>
-                <span className="status-value">{Object.keys(status.state?.lastSeenIds || {}).length} accounts</span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">Last poll</span>
-                <span className="status-value">{status.state?.lastPoll ? new Date(status.state.lastPoll).toLocaleTimeString() : '—'}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {openclawConfig && (
-          <div className="section">
-            <div className="section-header">
-              <h2>🦞 OpenClaw</h2>
-              {openclawHeartbeat && (
-                <span className={`status-badge ${openclawHeartbeat.status === 'ok-token' ? 'ok' : ''}`}>
-                  {openclawHeartbeat.status === 'ok-token' ? '● OK' : openclawHeartbeat.status}
-                </span>
-              )}
-            </div>
-            <div className="section-body">
-              <label>Heartbeat Interval</label>
-              <div className="input-row">
-                <input 
-                  type="text" 
-                  value={openclawConfig?.agents?.defaults?.heartbeat?.every || '30m'}
-                  onChange={e => updateHeartbeatConfig('every', e.target.value)}
-                  placeholder="30m"
-                  style={{width: '100px'}}
-                />
-                <span className="hint-inline">e.g., 5m, 15m, 1h</span>
-              </div>
-
-              <label>Target Channel</label>
-              <select 
-                value={openclawConfig?.agents?.defaults?.heartbeat?.target || 'last'}
-                onChange={e => updateHeartbeatConfig('target', e.target.value)}
-              >
-                <option value="last">Last active</option>
-                <option value="telegram">Telegram</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="discord">Discord</option>
-                <option value="none">None (silent)</option>
-              </select>
-
-              {openclawConfig?.agents?.defaults?.heartbeat?.target === 'telegram' && (
-                <>
-                  <label>Telegram Chat ID</label>
-                  <input 
-                    type="text" 
-                    value={openclawConfig?.agents?.defaults?.heartbeat?.to || ''}
-                    onChange={e => updateHeartbeatConfig('to', e.target.value)}
-                    placeholder="e.g., 5679450975"
-                  />
-                </>
-              )}
-
-              <div className="checkbox-group">
-                <label className="checkbox-label">
-                  <input 
-                    type="checkbox"
-                    checked={openclawConfig?.agents?.defaults?.heartbeat?.includeReasoning || false}
-                    onChange={e => updateHeartbeatConfig('includeReasoning', e.target.checked)}
-                  />
-                  <span>Include Reasoning</span>
-                  <span className="hint-small">Show thinking process</span>
-                </label>
-              </div>
-
-              <div className="checkbox-group">
-                <label className="checkbox-label">
-                  <input 
-                    type="checkbox"
-                    checked={openclawConfig?.channels?.telegram?.heartbeat?.showOk || false}
-                    onChange={e => updateChannelHeartbeat('telegram', 'showOk', e.target.checked)}
-                  />
-                  <span>Show OK Messages</span>
-                  <span className="hint-small">Send message even when nothing to report</span>
-                </label>
-              </div>
-
-              {openclawHeartbeat && (
-                <div className="heartbeat-status">
-                  <span className="hint">Last heartbeat: {openclawHeartbeat.status} 
-                    {openclawHeartbeat.durationMs && ` (${openclawHeartbeat.durationMs}ms)`}
-                    {openclawHeartbeat.silent && ' — silent'}
-                  </span>
-                </div>
-              )}
-
-              <div className="actions" style={{marginTop: '16px', justifyContent: 'flex-start'}}>
-                <button 
-                  className="btn-primary" 
-                  onClick={() => saveOpenclawConfig(openclawConfig)}
-                  disabled={savingOpenclaw}
-                >
-                  {savingOpenclaw ? 'Saving...' : 'Save OpenClaw Config'}
-                </button>
-                <button 
-                  className="btn-secondary" 
-                  onClick={fetchOpenclawHeartbeat}
-                >
-                  Refresh Status
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="section">
           <div className="section-header">
-            <h2>🔑 API Keys</h2>
+            <h2>Manual Poll</h2>
+          </div>
+          <div className="section-body">
+            <p className="hint">Trigger a poll manually to fetch your latest timeline.</p>
             <button 
-              className="btn-secondary btn-small" 
-              onClick={() => { setShowApiKeys(!showApiKeys); if (!showApiKeys) fetchApiKeys(); }}
+              className="btn-primary" 
+              onClick={triggerPoll}
+              disabled={polling}
             >
-              {showApiKeys ? 'Hide' : 'Show'}
+              {polling ? 'Polling...' : 'Poll Now'}
             </button>
           </div>
-          {showApiKeys && (
-            <div className="section-body">
-              <p className="hint">Use API keys to access PinchMe from your AI agent via MCP.</p>
-              
-              <div className="api-key-form">
-                <input 
-                  type="text" 
-                  placeholder="Key name (optional)" 
-                  value={newKeyName}
-                  onChange={e => setNewKeyName(e.target.value)}
-                />
-                <button 
-                  className="btn-primary" 
-                  onClick={generateApiKey}
-                  disabled={generatingKey}
-                >
-                  {generatingKey ? 'Generating...' : 'Generate New Key'}
-                </button>
-              </div>
-
-              {newlyGeneratedKey && (
-                <div className="new-key-alert">
-                  <p><strong>⚠️ Copy this key now!</strong> It won't be shown again.</p>
-                  <div className="key-display">
-                    <code>{newlyGeneratedKey}</code>
-                    <button className="btn-secondary btn-small" onClick={() => copyToClipboard(newlyGeneratedKey)}>Copy</button>
-                  </div>
-                </div>
-              )}
-
-              <div className="api-keys-list">
-                {apiKeys.length === 0 ? (
-                  <div className="empty">No API keys generated yet</div>
-                ) : (
-                  apiKeys.map((key, i) => (
-                    <div key={i} className="api-key-item">
-                      <div className="api-key-info">
-                        <span className="api-key-name">{key.name}</span>
-                        <code className="api-key-value">{key.api_key}</code>
-                        <span className="api-key-date">{new Date(key.created_at).toLocaleDateString()}</span>
-                      </div>
-                      <div className="api-key-actions">
-                        <button className="btn-secondary btn-small" onClick={() => copyToClipboard(key.api_key_full)}>Copy</button>
-                        <button className="btn-danger btn-small" onClick={() => deleteApiKey(key.api_key_full)}>Delete</button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="mcp-info">
-                <h4>🔌 MCP Integration</h4>
-                <p className="hint" style={{marginBottom: '16px'}}>Connect your AI agent to PinchMe using the Model Context Protocol (MCP).</p>
-                
-                <div style={{marginBottom: '16px'}}>
-                  <label style={{fontSize: '12px', color: '#888', marginBottom: '4px', display: 'block'}}>MCP Server URL</label>
-                  <div className="key-display">
-                    <code>https://pinchme-mcp-production.up.railway.app/sse</code>
-                    <button className="btn-secondary btn-small" onClick={() => copyToClipboard('https://pinchme-mcp-production.up.railway.app/sse')}>Copy</button>
-                  </div>
-                </div>
-
-                <details style={{marginTop: '16px'}}>
-                  <summary style={{cursor: 'pointer', color: '#0070f3', fontSize: '14px'}}>📖 Setup Instructions</summary>
-                  <div style={{marginTop: '12px', padding: '16px', background: '#0a0a0a', borderRadius: '8px'}}>
-                    <p style={{fontSize: '13px', marginBottom: '12px'}}><strong>Step 1:</strong> Generate an API key above</p>
-                    <p style={{fontSize: '13px', marginBottom: '12px'}}><strong>Step 2:</strong> Authenticate once using:</p>
-                    <pre style={{background: '#111', padding: '12px', borderRadius: '6px', fontSize: '12px', overflow: 'auto', marginBottom: '16px'}}>
-{`mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.authenticate' \\
-  --args '{"api_key": "YOUR_API_KEY"}'`}
-                    </pre>
-                    <p style={{fontSize: '13px', marginBottom: '12px'}}><strong>Step 3:</strong> Use any tool without passing api_key:</p>
-                    <pre style={{background: '#111', padding: '12px', borderRadius: '6px', fontSize: '12px', overflow: 'auto', marginBottom: '16px'}}>
-{`mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.list_handles'
-mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.add_handle' --args '{"handle": "elonmusk"}'
-mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.poll_now'`}
-                    </pre>
-                    <p style={{fontSize: '12px', color: '#888'}}>✅ Auth persists across sessions and server restarts!</p>
-                  </div>
-                </details>
-
-                <details style={{marginTop: '12px'}}>
-                  <summary style={{cursor: 'pointer', color: '#0070f3', fontSize: '14px'}}>🛠 Available Tools (10)</summary>
-                  <div style={{marginTop: '12px', padding: '16px', background: '#0a0a0a', borderRadius: '8px'}}>
-                    <ul style={{margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: '1.8'}}>
-                      <li><code>authenticate</code> — Auth with API key (once)</li>
-                      <li><code>list_handles</code> — List monitored accounts</li>
-                      <li><code>add_handle</code> — Add account to monitor</li>
-                      <li><code>remove_handle</code> — Stop monitoring account</li>
-                      <li><code>configure_handle</code> — Set mode/prompt/channel per account</li>
-                      <li><code>get_handle_config</code> — Get account settings</li>
-                      <li><code>poll_now</code> — Force immediate poll</li>
-                      <li><code>get_recent_tweets</code> — Get recent tweets</li>
-                      <li><code>get_status</code> — Get monitoring status</li>
-                      <li><code>set_poll_interval</code> — Change poll frequency</li>
-                    </ul>
-                  </div>
-                </details>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="section">
           <div className="section-header">
-            <h2>📋 Message Log</h2>
-            <button 
-              className="btn-secondary btn-small" 
-              onClick={() => { setShowSentTweets(!showSentTweets); if (!showSentTweets) fetchSentTweets(); }}
-            >
-              {showSentTweets ? 'Hide' : 'Show'}
-            </button>
+            <h2>How it works</h2>
           </div>
-          {showSentTweets && (
-            <div className="section-body">
-              <div className="log-actions">
-                <button className="btn-secondary btn-small" onClick={fetchSentTweets}>Refresh</button>
-                <span className="hint">{sentTweets.length} messages</span>
+          <div className="section-body">
+            <div className="flow">
+              <div className="flow-step">
+                <span className="flow-icon">🐦</span>
+                <span className="flow-text">X API</span>
               </div>
-              <div className="tweet-log">
-                {sentTweets.length === 0 ? (
-                  <div className="empty">No messages sent yet</div>
-                ) : (
-                  sentTweets.map((tweet, i) => (
-                    <div key={tweet.id || i} className="log-entry">
-                      <div className="log-header">
-                        <span className="log-handle">@{tweet.handle}</span>
-                        <span className={`log-status ${tweet.status}`}>{tweet.status}</span>
-                        <span className="log-time">{new Date(tweet.created_at).toLocaleString()}</span>
-                      </div>
-                      <div className="log-tweet">{tweet.tweet_text}</div>
-                      {tweet.handle_config && (tweet.handle_config.prompt || tweet.handle_config.channel) && (
-                        <div className="log-config">
-                          {tweet.handle_config.prompt && <span className="config-tag">Prompt: {tweet.handle_config.prompt}</span>}
-                          {tweet.handle_config.channel && <span className="config-tag">Canal: {tweet.handle_config.channel}</span>}
-                          {tweet.handle_config.mode && <span className="config-tag">Mode: {tweet.handle_config.mode}</span>}
-                        </div>
-                      )}
-                      <details className="log-formatted">
-                        <summary>Ver mensaje completo (lo que ve OpenClaw)</summary>
-                        <pre>{tweet.formatted_message}</pre>
-                      </details>
-                    </div>
-                  ))
-                )}
+              <span className="flow-arrow">→</span>
+              <div className="flow-step">
+                <span className="flow-icon">📥</span>
+                <span className="flow-text">Timeline Watcher</span>
+              </div>
+              <span className="flow-arrow">→</span>
+              <div className="flow-step">
+                <span className="flow-icon">🦞</span>
+                <span className="flow-text">OpenClaw</span>
+              </div>
+              <span className="flow-arrow">→</span>
+              <div className="flow-step">
+                <span className="flow-icon">💬</span>
+                <span className="flow-text">You</span>
               </div>
             </div>
-          )}
-        </div>
-
-        <div className="actions">
-          <button className="btn-secondary" onClick={triggerPoll}>Poll Now</button>
-          <button className="btn-primary" onClick={saveConfig} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
+            <p className="hint" style={{marginTop: '16px', textAlign: 'center'}}>
+              OpenClaw reviews your timeline during heartbeat and tells you what's interesting.
+            </p>
+          </div>
         </div>
       </main>
-
-      {showPasswordModal && (
-        <div className="modal-overlay" onClick={() => setShowPasswordModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3>Change Password</h3>
-            {passwordError && <div className="error-msg">{passwordError}</div>}
-            <form onSubmit={handleChangePassword}>
-              <label>Current Password</label>
-              <input type="password" value={passwordForm.current} onChange={e => setPasswordForm({...passwordForm, current: e.target.value})} />
-              <label>New Password</label>
-              <input type="password" value={passwordForm.new} onChange={e => setPasswordForm({...passwordForm, new: e.target.value})} />
-              <label>Confirm Password</label>
-              <input type="password" value={passwordForm.confirm} onChange={e => setPasswordForm({...passwordForm, confirm: e.target.value})} />
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowPasswordModal(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={changingPassword}>{changingPassword ? 'Saving...' : 'Update'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {editingHandle && (
-        <div className="modal-overlay" onClick={() => setEditingHandle(null)}>
-          <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
-            <h3>Configure @{editingHandle}</h3>
-            
-            <label>Mode</label>
-            <div className="radio-group">
-              <label className={`radio-option ${handleConfigForm.mode === 'now' ? 'selected' : ''}`}>
-                <input type="radio" name="mode" value="now" checked={handleConfigForm.mode === 'now'} onChange={e => setHandleConfigForm({...handleConfigForm, mode: e.target.value})} />
-                <span className="radio-label">Instant</span>
-                <span className="radio-desc">Notify immediately</span>
-              </label>
-              <label className={`radio-option ${handleConfigForm.mode === 'next-heartbeat' ? 'selected' : ''}`}>
-                <input type="radio" name="mode" value="next-heartbeat" checked={handleConfigForm.mode === 'next-heartbeat'} onChange={e => setHandleConfigForm({...handleConfigForm, mode: e.target.value})} />
-                <span className="radio-label">Batched</span>
-                <span className="radio-desc">Wait for next heartbeat</span>
-              </label>
-            </div>
-
-            <label>Channel</label>
-            <select value={handleConfigForm.channel} onChange={e => setHandleConfigForm({...handleConfigForm, channel: e.target.value})}>
-              <option value="">Default (active session)</option>
-              <option value="telegram">Telegram</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="discord">Discord</option>
-            </select>
-            <span className="hint">Where to send notifications</span>
-
-            <label>Custom Prompt</label>
-            <textarea 
-              value={handleConfigForm.prompt} 
-              onChange={e => setHandleConfigForm({...handleConfigForm, prompt: e.target.value})}
-              placeholder="e.g., Analyze this tweet and give your opinion"
-              rows={3}
-            />
-            <span className="hint">Instructions for how OpenClaw should process tweets from this account</span>
-
-            <div className="modal-actions">
-              <button type="button" className="btn-secondary" onClick={() => setEditingHandle(null)}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={() => saveHandleConfig(editingHandle)}>Save</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <style jsx>{styles}</style>
     </div>
@@ -835,70 +201,21 @@ const styles = `
 
   .nav {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     padding: 0 24px;
     height: 64px;
     border-bottom: 1px solid #333;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(10px);
-    z-index: 100;
-  }
-
-  .nav-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .logo {
-    font-size: 20px;
   }
 
   .nav-title {
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .nav-right {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .nav-btn {
-    background: none;
-    border: none;
-    color: #888;
-    font-size: 14px;
-    cursor: pointer;
-    padding: 8px 12px;
-    border-radius: 6px;
-    transition: all 0.15s;
-  }
-
-  .nav-btn:hover {
-    color: #fff;
-    background: #111;
-  }
-
-  .nav-user {
-    font-size: 14px;
-    color: #888;
-    padding: 6px 12px;
-    background: #111;
-    border-radius: 6px;
+    font-size: 16px;
+    font-weight: 600;
   }
 
   .main {
-    max-width: 680px;
+    max-width: 600px;
     margin: 0 auto;
-    padding: 48px 24px;
-    padding-top: 112px;
+    padding: 32px 24px;
   }
 
   .section {
@@ -922,202 +239,76 @@ const styles = `
     margin: 0;
   }
 
-  .count {
-    font-size: 12px;
-    color: #666;
-    background: #1a1a1a;
-    padding: 4px 8px;
-    border-radius: 4px;
-  }
-
   .section-body {
     padding: 20px;
   }
 
-  label {
-    display: block;
-    font-size: 13px;
-    color: #888;
-    margin-bottom: 8px;
-  }
-
-  input[type="text"],
-  input[type="url"],
-  input[type="password"] {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 14px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #fafafa;
-    outline: none;
-    transition: border-color 0.15s;
-    box-sizing: border-box;
-  }
-
-  input:focus {
-    border-color: #666;
-  }
-
-  input::placeholder {
-    color: #444;
-  }
-
-  .hint {
-    display: block;
+  .status-badge {
     font-size: 12px;
-    color: #666;
-    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 12px;
   }
 
-  .input-row {
-    display: flex;
-    gap: 12px;
+  .status-badge.online {
+    background: rgba(0, 200, 100, 0.15);
+    color: #0c8;
   }
 
-  .handle-input-wrap {
-    flex: 1;
-    position: relative;
-  }
-
-  .handle-input-wrap .at {
-    position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: #666;
-  }
-
-  .handle-input-wrap input {
-    padding-left: 28px;
-  }
-
-  .preview {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    background: #111;
-    border-radius: 8px;
-    margin-top: 12px;
-    font-size: 13px;
-  }
-
-  .preview a {
-    color: #0070f3;
-    text-decoration: none;
-  }
-
-  .handles {
-    margin-top: 16px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .handle-tag {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 6px;
-    font-size: 13px;
-  }
-
-  .handle-tag a {
-    color: #fafafa;
-    text-decoration: none;
-  }
-
-  .handle-tag button {
-    background: none;
-    border: none;
-    color: #666;
-    font-size: 16px;
-    cursor: pointer;
-    padding: 0;
-    line-height: 1;
-  }
-
-  .handle-tag button:hover {
-    color: #f00;
-  }
-
-  .empty {
-    color: #666;
-    font-size: 13px;
-    padding: 20px 0;
-    text-align: center;
-  }
-
-  input[type="range"] {
-    width: 100%;
-    height: 4px;
-    background: #333;
-    border-radius: 2px;
-    appearance: none;
-    cursor: pointer;
-  }
-
-  input[type="range"]::-webkit-slider-thumb {
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    background: #fff;
-    border-radius: 50%;
-    cursor: pointer;
-  }
-
-  .range-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    color: #666;
-    margin-top: 8px;
-  }
-
-  .status-section {
-    background: transparent;
-    border: 1px solid #333;
-  }
-
-  .status-row {
-    display: flex;
-    padding: 16px 20px;
-    gap: 32px;
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
   }
 
   .status-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    padding: 12px;
+    background: #111;
+    border-radius: 8px;
   }
 
   .status-label {
+    display: block;
     font-size: 12px;
     color: #666;
+    margin-bottom: 4px;
   }
 
   .status-value {
     font-size: 14px;
+    font-weight: 500;
   }
 
-  .status-value.online {
-    color: #0070f3;
+  .hint {
+    font-size: 13px;
+    color: #888;
+    line-height: 1.5;
   }
 
-  .actions {
-    display: flex;
-    justify-content: flex-end;
+  .hint code {
+    background: #1a1a1a;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Monaco', monospace;
+    font-size: 12px;
+  }
+
+  .schedule-list {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     gap: 12px;
-    margin-top: 32px;
+    margin-top: 12px;
+  }
+
+  .schedule-item {
+    padding: 12px;
+    background: #111;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 13px;
   }
 
   .btn-primary {
-    padding: 10px 16px;
+    padding: 12px 24px;
     font-size: 14px;
     font-weight: 500;
     background: #fff;
@@ -1126,6 +317,7 @@ const styles = `
     border-radius: 8px;
     cursor: pointer;
     transition: opacity 0.15s;
+    margin-top: 12px;
   }
 
   .btn-primary:hover {
@@ -1133,27 +325,6 @@ const styles = `
   }
 
   .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-secondary {
-    padding: 10px 16px;
-    font-size: 14px;
-    font-weight: 500;
-    background: transparent;
-    color: #fafafa;
-    border: 1px solid #333;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .btn-secondary:hover {
-    border-color: #666;
-  }
-
-  .btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -1169,15 +340,15 @@ const styles = `
   }
 
   .toast.success {
-    background: rgba(0, 112, 243, 0.1);
-    border: 1px solid #0070f3;
-    color: #0070f3;
+    background: rgba(0, 200, 100, 0.1);
+    border: 1px solid rgba(0, 200, 100, 0.3);
+    color: #0c8;
   }
 
   .toast.error {
     background: rgba(255, 0, 0, 0.1);
-    border: 1px solid #f00;
-    color: #f00;
+    border: 1px solid rgba(255, 0, 0, 0.3);
+    color: #f66;
   }
 
   .toast button {
@@ -1189,50 +360,36 @@ const styles = `
     opacity: 0.7;
   }
 
-  /* Login */
-  .login-container {
-    min-height: 100vh;
+  .flow {
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 8px;
+    padding: 20px 0;
   }
 
-  .login-box {
-    width: 100%;
-    max-width: 360px;
-    padding: 32px;
-  }
-
-  .login-box h1 {
-    font-size: 24px;
-    font-weight: 600;
-    margin: 0 0 8px;
-    text-align: center;
-  }
-
-  .login-box .subtitle {
-    color: #666;
-    text-align: center;
-    margin-bottom: 32px;
-  }
-
-  .login-box input {
-    margin-bottom: 16px;
-  }
-
-  .login-box .btn-primary {
-    width: 100%;
-    margin-top: 8px;
-  }
-
-  .error-msg {
-    background: rgba(255, 0, 0, 0.1);
-    border: 1px solid #f00;
-    color: #f00;
-    padding: 10px 12px;
+  .flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 16px;
+    background: #111;
     border-radius: 8px;
-    font-size: 13px;
-    margin-bottom: 16px;
+  }
+
+  .flow-icon {
+    font-size: 24px;
+  }
+
+  .flow-text {
+    font-size: 11px;
+    color: #888;
+  }
+
+  .flow-arrow {
+    color: #444;
+    font-size: 18px;
   }
 
   .loading {
@@ -1241,429 +398,5 @@ const styles = `
     align-items: center;
     justify-content: center;
     color: #666;
-  }
-
-  /* Modal */
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: #0a0a0a;
-    border: 1px solid #333;
-    border-radius: 12px;
-    padding: 24px;
-    width: 100%;
-    max-width: 400px;
-  }
-
-  .modal h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0 0 20px;
-  }
-
-  .modal label {
-    margin-top: 12px;
-  }
-
-  .modal input {
-    margin-bottom: 0;
-  }
-
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: 24px;
-  }
-
-  .modal-wide {
-    max-width: 480px;
-  }
-
-  .config-badge {
-    font-size: 12px;
-    margin-left: 4px;
-  }
-
-  .config-btn {
-    background: none;
-    border: none;
-    color: #666;
-    font-size: 14px;
-    cursor: pointer;
-    padding: 0 4px;
-    opacity: 0.7;
-    transition: opacity 0.15s;
-  }
-
-  .config-btn:hover {
-    opacity: 1;
-    color: #0070f3;
-  }
-
-  .radio-group {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .radio-option {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    padding: 12px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .radio-option:hover {
-    border-color: #666;
-  }
-
-  .radio-option.selected {
-    border-color: #0070f3;
-    background: rgba(0, 112, 243, 0.1);
-  }
-
-  .radio-option input {
-    display: none;
-  }
-
-  .radio-label {
-    font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 4px;
-  }
-
-  .radio-desc {
-    font-size: 12px;
-    color: #666;
-  }
-
-  select {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 14px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #fafafa;
-    outline: none;
-    cursor: pointer;
-    margin-bottom: 4px;
-  }
-
-  select:focus {
-    border-color: #666;
-  }
-
-  textarea {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 14px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #fafafa;
-    outline: none;
-    resize: vertical;
-    font-family: inherit;
-    box-sizing: border-box;
-  }
-
-  textarea:focus {
-    border-color: #666;
-  }
-
-  textarea::placeholder {
-    color: #444;
-  }
-
-  .status-badge {
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    background: #1a1a1a;
-    color: #666;
-  }
-
-  .status-badge.ok {
-    background: rgba(0, 200, 100, 0.1);
-    color: #0c8;
-  }
-
-  .hint-inline {
-    font-size: 12px;
-    color: #666;
-    margin-left: 12px;
-  }
-
-  .hint-small {
-    font-size: 11px;
-    color: #666;
-    margin-left: 8px;
-  }
-
-  .checkbox-group {
-    margin-top: 16px;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    font-size: 14px;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-  }
-
-  .heartbeat-status {
-    margin-top: 16px;
-    padding: 12px;
-    background: #111;
-    border-radius: 8px;
-  }
-
-  .btn-small {
-    padding: 6px 12px;
-    font-size: 12px;
-  }
-
-  .log-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .tweet-log {
-    max-height: 500px;
-    overflow-y: auto;
-  }
-
-  .log-entry {
-    padding: 12px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 8px;
-    margin-bottom: 8px;
-  }
-
-  .log-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
-    font-size: 13px;
-  }
-
-  .log-handle {
-    font-weight: 600;
-    color: #0070f3;
-  }
-
-  .log-status {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    text-transform: uppercase;
-  }
-
-  .log-status.sent {
-    background: rgba(0, 200, 100, 0.1);
-    color: #0c8;
-  }
-
-  .log-status.failed {
-    background: rgba(255, 0, 0, 0.1);
-    color: #f00;
-  }
-
-  .log-time {
-    color: #666;
-    margin-left: auto;
-  }
-
-  .log-tweet {
-    font-size: 14px;
-    line-height: 1.5;
-    margin-bottom: 8px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .log-config {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .config-tag {
-    font-size: 11px;
-    padding: 4px 8px;
-    background: #1a1a1a;
-    border-radius: 4px;
-    color: #888;
-  }
-
-  .log-formatted {
-    margin-top: 8px;
-  }
-
-  .log-formatted summary {
-    font-size: 12px;
-    color: #666;
-    cursor: pointer;
-    padding: 4px 0;
-  }
-
-  .log-formatted summary:hover {
-    color: #0070f3;
-  }
-
-  .log-formatted pre {
-    margin-top: 8px;
-    padding: 12px;
-    background: #0a0a0a;
-    border: 1px solid #333;
-    border-radius: 6px;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: #ccc;
-    font-family: 'Monaco', 'Menlo', monospace;
-  }
-
-  /* API Keys */
-  .api-key-form {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .api-key-form input {
-    flex: 1;
-  }
-
-  .new-key-alert {
-    background: rgba(255, 180, 0, 0.1);
-    border: 1px solid rgba(255, 180, 0, 0.3);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 16px;
-  }
-
-  .new-key-alert p {
-    margin: 0 0 12px;
-    color: #fb0;
-  }
-
-  .key-display {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: #111;
-    padding: 12px;
-    border-radius: 6px;
-  }
-
-  .key-display code {
-    flex: 1;
-    font-family: 'Monaco', 'Menlo', monospace;
-    font-size: 13px;
-    color: #0c8;
-    word-break: break-all;
-  }
-
-  .api-keys-list {
-    margin-bottom: 20px;
-  }
-
-  .api-key-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 8px;
-    margin-bottom: 8px;
-  }
-
-  .api-key-info {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .api-key-name {
-    font-weight: 500;
-    color: #fafafa;
-  }
-
-  .api-key-value {
-    font-family: 'Monaco', 'Menlo', monospace;
-    font-size: 12px;
-    color: #666;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .api-key-date {
-    font-size: 12px;
-    color: #666;
-  }
-
-  .api-key-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .btn-danger {
-    background: rgba(255, 0, 0, 0.1);
-    border: 1px solid rgba(255, 0, 0, 0.3);
-    color: #f66;
-  }
-
-  .btn-danger:hover {
-    background: rgba(255, 0, 0, 0.2);
-    border-color: #f66;
-  }
-
-  .mcp-info {
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 16px;
-  }
-
-  .mcp-info h4 {
-    margin: 0 0 12px;
-    font-size: 13px;
-    color: #888;
-  }
-
-  .mcp-info .hint {
-    margin-top: 12px;
   }
 `;

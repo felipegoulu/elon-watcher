@@ -1,0 +1,11 @@
+{
+  "name": "timeline-watcher",
+  "version": "1.0.0",
+  "description": "X Timeline watcher for OpenClaw",
+  "main": "timeline.js",
+  "scripts": {
+    "poll": "node timeline.js"
+  },
+  "author": "",
+  "license": "MIT"
+}

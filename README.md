@@ -1,110 +1,105 @@
-# PinchMe
+# Timeline Watcher
 
-Monitor X/Twitter accounts and get alerts via MCP or webhook.
+Polls your X timeline every 6 hours and sends interesting tweets to OpenClaw.
 
 ## Architecture
 
-- **Backend** (Railway): Node.js server that polls Apify and sends webhooks
-- **MCP Server** (Railway): MCP interface for AI agents
-- **Dashboard** (Vercel): Next.js UI to configure handles, webhook URL, and poll interval
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────┐     ┌─────┐
+│   X API     │ ──▶ │ Timeline Watcher │ ──▶ │  OpenClaw   │ ──▶ │ You │
+└─────────────┘     └──────────────────┘     └─────────────┘     └─────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │  Dashboard  │
+                    └─────────────┘
+```
 
-## MCP Server
+## Components
 
-**URL:** `https://pinchme-mcp-production.up.railway.app/sse`
+### `/timeline-watcher`
+Node.js script that:
+- Polls your X timeline via OAuth 2.0
+- Filters out already-seen tweets
+- Sends batch summary to OpenClaw as a system event
+- Runs via cron every 6 hours (2am, 8am, 2pm, 8pm)
 
-### Tools
+### `/webhook-server`
+HTTP server that:
+- Receives webhook POSTs and forwards to OpenClaw
+- Manages OpenClaw config remotely
+- Runs on EC2 via pm2
 
-| Tool | Description |
-|------|-------------|
-| `authenticate` | Auth with API key (once per session) |
-| `list_handles` | List monitored accounts |
-| `add_handle` | Add account to monitor |
-| `remove_handle` | Stop monitoring account |
-| `configure_handle` | Set mode/prompt/channel per account |
-| `get_handle_config` | Get account settings |
-| `poll_now` | Force immediate poll |
-| `get_recent_tweets` | Get recent tweets |
-| `get_status` | Get monitoring status |
-| `set_poll_interval` | Change poll frequency |
+### `/dashboard`
+Next.js dashboard showing:
+- Polling status and history
+- Manual poll trigger
+- Schedule overview
 
-### Usage
+## Setup
+
+### 1. Clone and configure
 
 ```bash
-# Authenticate once
-mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.authenticate' \
-  --args '{"api_key": "pk_..."}'
+git clone https://github.com/felipegoulu/timeline-watcher.git
+cd timeline-watcher
 
-# Then use tools without api_key
-mcporter call 'https://pinchme-mcp-production.up.railway.app/sse.list_handles'
+# Setup timeline watcher
+cd timeline-watcher
+cp .env.example .env
+# Edit .env with your X API credentials
+# Create tokens.json from OAuth flow
 ```
 
-## Backend API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/config` | GET | Get current config |
-| `/config` | PUT | Update config (restarts polling) |
-| `/status` | GET | Get full status with state |
-| `/poll` | POST | Trigger immediate poll |
-| `/mcp/activate` | POST | Mark API key as MCP-activated |
-| `/mcp/activated-keys` | GET | List MCP-activated keys |
-
-## Deployment
-
-### Backend (Railway)
-
-1. Push to Railway
-2. Set env vars:
-   - `APIFY_TOKEN=your_token`
-   - `DATABASE_URL=postgres://...`
-
-### MCP Server (Railway)
-
-1. Root directory: `mcp-server`
-2. Set env: `API_URL=https://your-backend.up.railway.app`
-
-### Dashboard (Vercel)
-
-1. Connect to GitHub repo
-2. Root directory: `dashboard`
-3. Set env: `NEXT_PUBLIC_API_URL=https://your-backend.up.railway.app`
-
-## Local Development
+### 2. Deploy to EC2
 
 ```bash
-# Backend
-npm install
-APIFY_TOKEN=xxx DATABASE_URL=xxx npm run dev
+# On EC2
+cd ~/timeline-watcher
 
-# MCP Server
-cd mcp-server
-npm install
-API_URL=http://localhost:3000 npm start
+# Install deps
+cd timeline-watcher && npm install
+cd ../webhook-server && npm install
+cd ../dashboard && npm install && npm run build
 
-# Dashboard
-cd dashboard
-npm install
-NEXT_PUBLIC_API_URL=http://localhost:3000 npm run dev
+# Start webhook server
+cd ../webhook-server
+pm2 start server.js --name webhook
+
+# Setup cron for timeline polling
+cd ../timeline-watcher
+./setup-cron.sh
 ```
 
-## Webhook Payload
+### 3. Verify
 
-```json
-{
-  "event": "new_tweet",
-  "timestamp": "2024-01-01T00:00:00.000Z",
-  "handleConfig": {
-    "mode": "now",
-    "prompt": "",
-    "channel": ""
-  },
-  "tweet": {
-    "id": "...",
-    "url": "...",
-    "text": "...",
-    "createdAt": "...",
-    "author": "username"
-  }
-}
+```bash
+# Test poll manually
+cd timeline-watcher
+node timeline.js
+
+# Check cron
+crontab -l | grep timeline
 ```
+
+## Environment Variables
+
+### timeline-watcher/.env
+
+| Variable | Description |
+|----------|-------------|
+| X_CLIENT_ID | X API OAuth 2.0 Client ID |
+| X_CLIENT_SECRET | X API OAuth 2.0 Client Secret |
+| MAX_TWEETS_PER_POLL | Max tweets per poll (default: 50) |
+| OPENCLAW_CMD | OpenClaw CLI command (default: openclaw) |
+| OPENCLAW_MODE | Event mode (default: next-heartbeat) |
+
+## Cost
+
+- **X API:** Pay-per-use (~$0.10-0.50/day for 200 tweets)
+- **EC2:** t2.micro free tier eligible
+- **Vercel:** Free for dashboard
+
+## License
+
+MIT
